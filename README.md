@@ -32,15 +32,15 @@ The response from the LLM is displayed in the terminal.
 ```plaintext
 +------------+      +-------------+      +------------+      +------------------+      +-----------+      +-------------+
 |            |      |             |      |            |      |                  |      |           |      |             |
-| Input Text | ---> | Tokenization| ---> | Embeddings | ---> | Attention        | ---> | Decoding  | ---> | Output Text |
-|            |      |             |      |            |      | Mechanisms       |      |           |      |             |
+| Input Text | ---> | Tokenization| ---> | Embeddings | ---> |    Attention     | ---> | Decoding  | ---> | Output Text |
+|            |      |             |      |            |      |    Mechanisms    |      |           |      |             |
 +------------+      +-------------+      +------------+      +------------------+      +-----------+      +-------------+
 ```
 
 ## Getting Started
 
 ### Prerequisites
-- Python 3.x installed with `pip`
+- Python 3.8+ installed with `pip` (Full Extent of the SpeechRecognition 3.10.4 library requires python 3.8+)
 - Go 1.x installed
 - Access to Google Cloud Platform for deploying a VM
 
