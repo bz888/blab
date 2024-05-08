@@ -51,7 +51,7 @@ The response from the LLM is displayed in the terminal.
       pip install speech_recognition pyaudio transformers flask
       ```
 2. **Go Environment Setup**
-    - Set up the Go workspace and ensure Go is properly installed.
+    - Set up the Go workspace and ensure Go is properly installed. [Go Docs](https://go.dev/doc/).
 
 3. **VM Setup**
     - Deploy a GCP VM.
