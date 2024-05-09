@@ -1,58 +1,112 @@
 package main
 
 import (
+    "bytes"
     "encoding/json"
     "log"
     "net/http"
 )
 
-// Define a struct to parse incoming JSON data
-type Request struct {
+// Request from client
+type ClientRequest struct {
     Text string `json:"text"`
 }
 
-// Define a struct to format outgoing JSON data
-type Response struct {
+// Request to external API
+type APIRequest struct {
+    Model    string   `json:"model"`
+    Messages []Message `json:"messages"`
+    Stream   bool     `json:"stream"`
+}
+
+type Message struct {
+    Role    string `json:"role"`
+    Content string `json:"content"`
+}
+
+type APIResponse struct {
+    Model            string   `json:"model"`
+    CreatedAt        string   `json:"created_at"`
+    Message          Message  `json:"message"`
+    Done             bool     `json:"done"`
+    TotalDuration    int64    `json:"total_duration"`
+    LoadDuration     int64    `json:"load_duration"`
+    PromptEvalCount  int      `json:"prompt_eval_count"`
+    PromptEvalDuration int64  `json:"prompt_eval_duration"`
+    EvalCount        int      `json:"eval_count"`
+    EvalDuration     int64    `json:"eval_duration"`
+}
+
+// Response to client
+type ClientResponse struct {
     ProcessedText string `json:"processedText"`
 }
 
+var URL = "http://localhost:11434/"
+
 // Handler function that processes text
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
-    var req Request
+    var clientReq ClientRequest
 
-    // Log the incoming request
-    log.Println("Received a new request")
+    err := json.NewDecoder(r.Body).Decode(&clientReq)
+    log.Println(r.Body)
 
-    // Decode JSON body from the request
-    err := json.NewDecoder(r.Body).Decode(&req)
     if err != nil {
-        log.Printf("Error decoding JSON: %s", err)
+        log.Printf("Error decoding client JSON: %s", err)
         http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
     defer r.Body.Close()
-    log.Printf("Decoded text: %s", req.Text)
 
-    // Process the text (e.g., modify, analyze, etc.)
-    processedText := "Processed: " + req.Text
-    log.Printf("Processing completed: %s", processedText)
+    // Prepare the request for the external API
+    apiReq := APIRequest{
+        Model: "llama3",
+        Messages: []Message{
+            {
+                Role:    "user",
+                Content: clientReq.Text,
+            },
+        },
+        Stream: false,
+    }
 
-    // Create a response struct
-    resp := Response{ProcessedText: processedText}
+    requestData, err := json.Marshal(apiReq)
+    if err != nil {
+        log.Printf("Error marshaling API request JSON: %s", err)
+        http.Error(w, "Error marshaling JSON", http.StatusInternalServerError)
+        return
+    }
 
-    // Encode and send the response as JSON
-    if err := json.NewEncoder(w).Encode(resp); err != nil {
-        log.Printf("Error encoding JSON: %s", err)
+    // Send the request to the external API
+    apiURL := "http://localhost:11434/api/chat"
+    apiResp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestData))
+    if err != nil {
+        log.Printf("Error calling external API: %s", err)
+        http.Error(w, "Error calling external API", http.StatusInternalServerError)
+        return
+    }
+    defer apiResp.Body.Close()
+
+    // Read the response from external API
+    var apiResponse APIResponse
+    if err := json.NewDecoder(apiResp.Body).Decode(&apiResponse); err != nil {
+        log.Printf("Error decoding API response JSON: %s", err)
+        http.Error(w, "Error decoding API response JSON", http.StatusInternalServerError)
+        return
+    }
+
+    log.Printf("Received response from other service: %s", apiResponse.Message.Content)
+
+    // Send the response back to the client
+    clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
+    if err := json.NewEncoder(w).Encode(clientResp); err != nil {
+        log.Printf("Error encoding client response JSON: %s", err)
         http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
     }
 }
 
-// Main function to set up the routes and start the server
 func main() {
-    // Set up URL endpoint and handler function
     http.HandleFunc("/process_text", processTextHandler)
     log.Println("Server starting on http://localhost:8080/")
-
-    // Start the HTTP server on port 8080
     log.Fatal(http.ListenAndServe(":8080", nil))
 }

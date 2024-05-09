@@ -13,7 +13,7 @@ def send_to_api(text):
 
     if response.status_code == 200:
         logging.debug("Received successful response from API")
-        return response.json()['processedText']
+        return response.json()
     else:
         logging.error("Error from API: Status Code %d", response.status_code)
         return "Error from API: " + str(response.status_code)
@@ -25,4 +25,3 @@ if __name__ == "__main__":
     logging.info("Test text: %s", recognized_text)
     processed_text = send_to_api(recognized_text)
     logging.info("Processed text: %s", processed_text)
-
