@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 )
@@ -44,6 +45,25 @@ type ClientResponse struct {
 
 var URL = "http://localhost:11434/"
 
+/*
+Features:
+
+chat history
+selectable LLM
+text input
+stream output (via keep alive)
+
+/list should show all available LLM
+/voice should trigger voice recognition
+/exit quit application
+
+user -> CLI python speech recogniser
+python (input and output) // this can be also written in rust or GO, depends on whichever is easiest to write a CLI tool
+
+GO takes req -> resp
+// do the logic for pinging ollama
+// keep alive with restful alive to allow streamed results
+*/
 // Handler function that processes text
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
@@ -56,11 +76,16 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+
+		}
+	}(r.Body)
 
 	// Prepare the request for the external API
 	apiReq := APIRequest{
-		Model: "llama3",
+		Model: "llama3", // this should be selectable
 		Messages: []Message{
 			{
 				Role:    "user",
@@ -98,6 +123,7 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received response from other service: %s", apiResponse.Message.Content)
 
 	// Send the response back to the client
+	// Keep alive
 	clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
 	if err := json.NewEncoder(w).Encode(clientResp); err != nil {
 		log.Printf("Error encoding client response JSON: %s", err)
@@ -105,7 +131,7 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func main() {
+func StartServer() {
 	http.HandleFunc("/process_text", processTextHandler)
 	log.Println("Server starting on http://localhost:8080/")
 	log.Fatal(http.ListenAndServe(":8080", nil))
