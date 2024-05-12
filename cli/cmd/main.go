@@ -1,24 +1,104 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"io"
+	"net/http"
+	"strconv"
 	"strings"
 )
+
+// ClientRequest Request from client
+type ClientRequest struct {
+	Text  string `json:"text"`
+	Model string `json:"model"`
+}
+
+// APIRequest Request to external API
+type APIRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream"`
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type APIResponse struct {
+	Model              string  `json:"model"`
+	CreatedAt          string  `json:"created_at"`
+	Message            Message `json:"message"`
+	Done               bool    `json:"done"`
+	TotalDuration      int64   `json:"total_duration"`
+	LoadDuration       int64   `json:"load_duration"`
+	PromptEvalCount    int     `json:"prompt_eval_count"`
+	PromptEvalDuration int64   `json:"prompt_eval_duration"`
+	EvalCount          int     `json:"eval_count"`
+	EvalDuration       int64   `json:"eval_duration"`
+}
+
+// ClientResponse Response to client
+type ClientResponse struct {
+	ProcessedText string `json:"processedText"`
+}
 
 var (
 	debug bool
 )
 
-func main() {
+type LogTypes string
 
+const (
+	Error   LogTypes = "error"
+	Warning LogTypes = "warning"
+	Info    LogTypes = "info"
+)
+
+var debugConsole *tview.TextView
+var port = 8080
+
+func init() {
 	flag.BoolVar(&debug, "debug", false, "enable debug output")
 	flag.Parse()
+}
 
-	//go api.StartServer(debug)
+func main() {
 	// Start the server in a goroutine to allow asynchronous execution
+
+	go func() {
+		http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+			status := struct {
+				PortWorking   bool `json:"port_working"`
+				ServerWorking bool `json:"server_working"`
+			}{
+				PortWorking:   true,
+				ServerWorking: true,
+			}
+
+			err := json.NewEncoder(w).Encode(status)
+			if err != nil {
+				return
+			}
+		})
+
+		http.HandleFunc("/process_text", processTextHandler)
+		if debug {
+			debugLog("info", "Server starting on http://localhost:"+strconv.Itoa(port)+"/")
+			debugLog("info", "Debug mode is enabled")
+		}
+		err := http.ListenAndServe(strconv.Itoa(port), nil)
+		if err != nil {
+			return
+		}
+	}()
+
 	app := tview.NewApplication()
 
 	textArea := tview.NewTextArea()
@@ -50,7 +130,7 @@ func main() {
 		AddItem(subFlex, 0, 2, false)
 
 	if debug {
-		debugConsole := tview.NewTextView().
+		debugConsole = tview.NewTextView().
 			SetChangedFunc(func() {
 				app.Draw()
 			}).
@@ -63,8 +143,6 @@ func main() {
 		mainFlex.
 			AddItem(debugConsole, 0, 1, false)
 	}
-
-	// Set up the application
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -90,12 +168,88 @@ func main() {
 			textArea.SetDisabled(false)
 
 			return event
-			//default:
-			//	panic("unhandled default case text area")
 		}
 		return event
 	})
+
 	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
+	}
+}
+func processTextHandler(w http.ResponseWriter, r *http.Request) {
+	var clientReq ClientRequest
+
+	err := json.NewDecoder(r.Body).Decode(&clientReq)
+	debugLog("info", "Processing request:", clientReq)
+
+	if err != nil {
+		debugLog("error", "Error decoding client JSON: %s", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+
+		}
+	}(r.Body)
+
+	// Prepare the request for the external API
+	apiReq := APIRequest{
+		Model: clientReq.Model, // this should be selectable
+		Messages: []Message{
+			{
+				Role:    "user", // TODO update this
+				Content: clientReq.Text,
+			},
+		},
+		Stream: false,
+	}
+
+	requestData, err := json.Marshal(apiReq)
+	debugLog("info", "Sending data to API:", string(requestData))
+
+	if err != nil {
+		debugLog("error", "Error marshaling API request JSON: %s", err)
+		http.Error(w, "Error marshaling JSON", http.StatusInternalServerError)
+		return
+	}
+
+	// Send the request to the external API
+	apiURL := "http://localhost:11434/api/chat"
+	apiResp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestData))
+	if err != nil {
+		debugLog("error", "Error calling external API: %s", err)
+		http.Error(w, "Error calling external API", http.StatusInternalServerError)
+		return
+	}
+	defer apiResp.Body.Close()
+
+	// Read the response from external API
+	var apiResponse APIResponse
+	if err := json.NewDecoder(apiResp.Body).Decode(&apiResponse); err != nil {
+		debugLog("error", "Error decoding API response JSON: %s", err)
+		http.Error(w, "Error decoding API response JSON", http.StatusInternalServerError)
+		return
+	}
+	debugLog("info", "Received response from API:", apiResponse)
+
+	clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
+	if err := json.NewEncoder(w).Encode(clientResp); err != nil {
+		debugLog("error", "Error encoding client response JSON: %s", err)
+		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+	}
+}
+
+func debugLog(errorType LogTypes, v ...interface{}) {
+	if debug {
+		switch errorType {
+		case Info:
+			fmt.Fprintf(debugConsole, "[green]DEBUG (Info): %v[-]\n", v)
+		case Error:
+			fmt.Fprintf(debugConsole, "[red]DEBUG (Error): %v[-]\n", v)
+		case Warning:
+			fmt.Fprintf(debugConsole, "[yellow]DEBUG (Warning): %v[-]\n", v)
+		}
 	}
 }

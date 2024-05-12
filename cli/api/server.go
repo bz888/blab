@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/rivo/tview"
 	"io"
 	"log"
 	"net/http"
@@ -46,11 +47,12 @@ type ClientResponse struct {
 var URL = "http://localhost:11434/"
 
 var debugMode bool // Flag to control debug logging
-//var debugConsoleGlob *tview.TextView
+var debugConsoleGlob *tview.TextView
 
 func debugLog(v ...interface{}) {
 	if debugMode {
 		//fmt.Fprintf(debugConsoleGlob, "DEBUG: %v\n", v)
+		log.Println(v)
 	}
 }
 
@@ -120,11 +122,25 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func StartServer(debug bool) {
-	debugMode = debug // Set the global debug flag based on input
+func StartServer(debugMode bool, debugConsole *tview.TextView) {
+	//debugMode = debug // Set the global debug flag based on input
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		status := struct {
+			PortWorking   bool `json:"port_working"`
+			ServerWorking bool `json:"server_working"`
+		}{
+			PortWorking:   true,
+			ServerWorking: true,
+		}
+
+		err := json.NewEncoder(w).Encode(status)
+		if err != nil {
+			return
+		}
+	})
 
 	http.HandleFunc("/process_text", processTextHandler)
-	if debug {
+	if debugMode {
 		//debugConsoleGlob = debugConsole
 		log.Println("Server starting on http://localhost:8080/")
 		log.Println("Debug mode is enabled")
