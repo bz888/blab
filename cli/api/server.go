@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"bytes"
@@ -45,31 +45,21 @@ type ClientResponse struct {
 
 var URL = "http://localhost:11434/"
 
-/*
-Features:
+var debugMode bool // Flag to control debug logging
+//var debugConsoleGlob *tview.TextView
 
-chat history
-selectable LLM
-text input
-stream output (via keep alive)
+func debugLog(v ...interface{}) {
+	if debugMode {
+		//fmt.Fprintf(debugConsoleGlob, "DEBUG: %v\n", v)
+	}
+}
 
-/list should show all available LLM
-/voice should trigger voice recognition
-/exit quit application
-
-user -> CLI python speech recogniser
-python (input and output) // this can be also written in rust or GO, depends on whichever is easiest to write a CLI tool
-
-GO takes req -> resp
-// do the logic for pinging ollama
-// keep alive with restful alive to allow streamed results
-*/
 // Handler function that processes text
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
 
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
-	log.Println(r.Body)
+	debugLog("Processing request:", clientReq)
 
 	if err != nil {
 		log.Printf("Error decoding client JSON: %s", err)
@@ -96,6 +86,8 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestData, err := json.Marshal(apiReq)
+	debugLog("Sending data to API:", string(requestData))
+
 	if err != nil {
 		log.Printf("Error marshaling API request JSON: %s", err)
 		http.Error(w, "Error marshaling JSON", http.StatusInternalServerError)
@@ -119,11 +111,8 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error decoding API response JSON", http.StatusInternalServerError)
 		return
 	}
+	debugLog("Received response from API:", apiResponse)
 
-	log.Printf("Received response from other service: %s", apiResponse.Message.Content)
-
-	// Send the response back to the client
-	// Keep alive
 	clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
 	if err := json.NewEncoder(w).Encode(clientResp); err != nil {
 		log.Printf("Error encoding client response JSON: %s", err)
@@ -131,8 +120,14 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func StartServer() {
+func StartServer(debug bool) {
+	debugMode = debug // Set the global debug flag based on input
+
 	http.HandleFunc("/process_text", processTextHandler)
-	log.Println("Server starting on http://localhost:8080/")
+	if debug {
+		//debugConsoleGlob = debugConsole
+		log.Println("Server starting on http://localhost:8080/")
+		log.Println("Debug mode is enabled")
+	}
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

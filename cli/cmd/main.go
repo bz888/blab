@@ -1,13 +1,24 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"strings"
 )
 
+var (
+	debug bool
+)
+
 func main() {
+
+	flag.BoolVar(&debug, "debug", false, "enable debug output")
+	flag.Parse()
+
+	//go api.StartServer(debug)
+	// Start the server in a goroutine to allow asynchronous execution
 	app := tview.NewApplication()
 
 	textArea := tview.NewTextArea()
@@ -31,10 +42,29 @@ func main() {
 	})
 
 	// Create a Flex layout to place the chat view and input field vertically
-	flex := tview.NewFlex().
+	subFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(textView, 0, 1, false).
 		AddItem(textArea, 8, 2, true)
+	mainFlex := tview.NewFlex().
+		AddItem(subFlex, 0, 2, false)
+
+	if debug {
+		debugConsole := tview.NewTextView().
+			SetChangedFunc(func() {
+				app.Draw()
+			}).
+			SetDynamicColors(true).
+			SetRegions(true).
+			SetWordWrap(true)
+
+		debugConsole.SetTitle("Debugger").SetBorder(true)
+		debugConsole.SetScrollable(true).ScrollToEnd()
+		mainFlex.
+			AddItem(debugConsole, 0, 1, false)
+	}
+
+	// Set up the application
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -65,9 +95,7 @@ func main() {
 		}
 		return event
 	})
-
-	// Set up the application
-	if err := app.SetRoot(flex, true).SetFocus(textArea).Run(); err != nil {
+	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
 	}
 }
