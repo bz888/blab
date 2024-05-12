@@ -102,10 +102,10 @@ func main() {
 	}()
 
 	app := tview.NewApplication()
-
+	
 	textArea := tview.NewTextArea()
 	textArea.SetTitle("Question").SetBorder(true)
-
+	
 	textView := tview.NewTextView().
 		SetChangedFunc(func() {
 			app.Draw()
@@ -113,8 +113,13 @@ func main() {
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWordWrap(true)
+
+	//Enable mouse to have mouse scrolling working. We dont need SetScrollable because it is 'true' by default
+	app.EnableMouse(true)
+
 	textView.SetTitle("Conversation").SetBorder(true)
-	textView.SetScrollable(true).ScrollToEnd()
+	// textView.SetScrollable(true)
+	textView.ScrollToEnd()
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyEnter:
@@ -141,7 +146,7 @@ func main() {
 			SetWordWrap(true)
 
 		debugConsole.SetTitle("Debugger").SetBorder(true)
-		debugConsole.SetScrollable(true).ScrollToEnd()
+		debugConsole.ScrollToEnd()
 		mainFlex.
 			AddItem(debugConsole, 0, 1, false)
 	}
