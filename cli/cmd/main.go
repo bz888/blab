@@ -89,13 +89,15 @@ func main() {
 		})
 
 		http.HandleFunc("/process_text", processTextHandler)
-		if debug {
-			debugLog("info", "Server starting on http://localhost:"+strconv.Itoa(port)+"/")
-			debugLog("info", "Debug mode is enabled")
-		}
-		err := http.ListenAndServe(strconv.Itoa(port), nil)
+
+		address := ":" + strconv.Itoa(port)
+		debugLog("info", "Debug mode is enabled")
+		debugLog("info", "Server started on http://localhost"+address+"/")
+
+		// Start the server
+		err := http.ListenAndServe(address, nil)
 		if err != nil {
-			return
+			debugLog("error", "Error starting server: ", err)
 		}
 	}()
 
@@ -158,15 +160,39 @@ func main() {
 			textArea.SetText("", false)
 			textArea.SetDisabled(true)
 
-			fmt.Fprintln(textView, "[red::]You:[-]")
-			fmt.Fprintf(textView, "%s\n\n", content)
+			go func() {
+				fmt.Fprintln(textView, "[red::]You:[-]")
+				fmt.Fprintf(textView, "%s\n\n", content)
 
-			mockResponse := "Yes, very hello world"
-			fmt.Fprintf(textView, "[green]Bot: %s\n\n", mockResponse)
+				clientReq := ClientRequest{Model: "llama3", Text: content}
+				debugLog("info", clientReq.Text)
+				requestData, err := json.Marshal(clientReq)
+				if err != nil {
+					debugLog("error", "Failed to serialize request: %s\n\n", err)
+					textArea.SetDisabled(false)
+					return
+				}
 
-			fmt.Fprintf(textView, "\n\n")
-			textArea.SetDisabled(false)
+				resp, err := http.Post("http://localhost:8080/process_text", "application/json", bytes.NewBuffer(requestData))
+				if err != nil {
+					debugLog("error", "Failed to send request: %s\n\n", err)
+					textArea.SetDisabled(false)
+					return
+				}
+				defer resp.Body.Close()
 
+				var clientResp ClientResponse
+				if err := json.NewDecoder(resp.Body).Decode(&clientResp); err != nil {
+					debugLog("error", "Failed to decode response: %s\n\n", err)
+					textArea.SetDisabled(false)
+					return
+				}
+
+				fmt.Fprintf(textView, "[green::]Bot:[-]\n")
+				fmt.Fprintf(textView, "%s\n\n", clientResp.ProcessedText)
+				fmt.Fprintf(textView, "\n\n")
+				textArea.SetDisabled(false)
+			}()
 			return event
 		}
 		return event
