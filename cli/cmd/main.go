@@ -1,17 +1,24 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
+
+type Client struct {
+	base *url.URL
+	http *http.Client
+}
 
 // ClientRequest Request from client
 type ClientRequest struct {
@@ -102,10 +109,10 @@ func main() {
 	}()
 
 	app := tview.NewApplication()
-	
+
 	textArea := tview.NewTextArea()
 	textArea.SetTitle("Question").SetBorder(true)
-	
+
 	textView := tview.NewTextView().
 		SetChangedFunc(func() {
 			app.Draw()
@@ -164,13 +171,23 @@ func main() {
 			}
 			textArea.SetText("", false)
 			textArea.SetDisabled(true)
+			/*
+				'/' commands
+				/help - shows all available commands
+				/bye - exit program || ctrl-c
+				/voice - enable voice recognition
+				/debug
+
+				enter: submit
+				scroll: up/down (mouse scroll) or (arrow keys)
+			*/
 
 			go func() {
 				fmt.Fprintln(textView, "[red::]You:[-]")
 				fmt.Fprintf(textView, "%s\n\n", content)
 
 				clientReq := ClientRequest{Model: "llama3", Text: content}
-				debugLog("info", clientReq.Text)
+				debugLog("info", "Sending request:", clientReq.Text)
 				requestData, err := json.Marshal(clientReq)
 				if err != nil {
 					debugLog("error", "Failed to serialize request: %s\n\n", err)
@@ -178,7 +195,17 @@ func main() {
 					return
 				}
 
-				resp, err := http.Post("http://localhost:8080/process_text", "application/json", bytes.NewBuffer(requestData))
+				req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
+				if err != nil {
+					debugLog("error", "Failed to create request: %s\n\n", err)
+					textArea.SetDisabled(false)
+					return
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/x-ndjson")
+
+				client := &http.Client{}
+				resp, err := client.Do(req)
 				if err != nil {
 					debugLog("error", "Failed to send request: %s\n\n", err)
 					textArea.SetDisabled(false)
@@ -186,18 +213,28 @@ func main() {
 				}
 				defer resp.Body.Close()
 
-				var clientResp ClientResponse
-				if err := json.NewDecoder(resp.Body).Decode(&clientResp); err != nil {
-					debugLog("error", "Failed to decode response: %s\n\n", err)
-					textArea.SetDisabled(false)
-					return
-				}
-
 				fmt.Fprintf(textView, "[green::]Bot:[-]\n")
-				fmt.Fprintf(textView, "%s\n\n", clientResp.ProcessedText)
-				fmt.Fprintf(textView, "\n\n")
+				scanner := bufio.NewScanner(resp.Body)
+				buf := make([]byte, 0, 64*1024) // Create an initial buffer of size 64 KB
+				scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
+
+				for scanner.Scan() {
+					var clientResp ClientResponse
+					err := json.Unmarshal(scanner.Bytes(), &clientResp)
+					if err != nil {
+						debugLog("error", "Failed to decode response: %s\n\n", err)
+						continue
+					}
+					app.QueueUpdateDraw(func() {
+						fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
+					})
+				}
+				if err := scanner.Err(); err != nil {
+					debugLog("error", "Failed to read stream: %s\n\n", err)
+				}
 				textArea.SetDisabled(false)
 			}()
+
 			return event
 		}
 		return event
@@ -209,67 +246,105 @@ func main() {
 }
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
-
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
-	debugLog("info", "Processing request:", clientReq)
-
 	if err != nil {
-		debugLog("error", "Error decoding client JSON: %s", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
+	defer r.Body.Close()
 
-		}
-	}(r.Body)
-
-	// Prepare the request for the external API
 	apiReq := APIRequest{
-		Model: clientReq.Model, // this should be selectable
+		Model: clientReq.Model,
 		Messages: []Message{
 			{
-				Role:    "user", // TODO update this
+				Role:    "user",
 				Content: clientReq.Text,
 			},
 		},
-		Stream: false,
+		Stream: true,
 	}
 
-	requestData, err := json.Marshal(apiReq)
-	debugLog("info", "Sending data to API:", string(requestData))
+	client := &Client{
+		base: &url.URL{Scheme: "http", Host: "localhost:11434"},
+		http: &http.Client{},
+	}
+
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	encoder := json.NewEncoder(w)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	err = client.Chat(r.Context(), &apiReq, func(bts []byte) error {
+		var apiResp APIResponse
+		if err := json.Unmarshal(bts, &apiResp); err != nil {
+			return err
+		}
+
+		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
+
+		if !apiResp.Done {
+			debugLog("info", "Received response:", apiResp.Message.Content)
+		}
+
+		debugLog("info", "Completed response", string(bts))
+
+		if err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
 
 	if err != nil {
-		debugLog("error", "Error marshaling API request JSON: %s", err)
-		http.Error(w, "Error marshaling JSON", http.StatusInternalServerError)
-		return
+		http.Error(w, "Failed to process request: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (c *Client) Chat(ctx context.Context, req *APIRequest, fn func([]byte) error) error {
+	return c.stream(ctx, http.MethodPost, "/api/chat", req, fn)
+}
+
+func (c *Client) stream(ctx context.Context, method string, path string, data any, fn func([]byte) error) error {
+	var buf *bytes.Buffer
+	if data != nil {
+		bts, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		buf = bytes.NewBuffer(bts)
 	}
 
-	// Send the request to the external API
-	apiURL := "http://localhost:11434/api/chat"
-	apiResp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestData))
+	requestURL := c.base.ResolveReference(&url.URL{Path: path})
+	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
 	if err != nil {
-		debugLog("error", "Error calling external API: %s", err)
-		http.Error(w, "Error calling external API", http.StatusInternalServerError)
-		return
+		return err
 	}
-	defer apiResp.Body.Close()
 
-	// Read the response from external API
-	var apiResponse APIResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&apiResponse); err != nil {
-		debugLog("error", "Error decoding API response JSON: %s", err)
-		http.Error(w, "Error decoding API response JSON", http.StatusInternalServerError)
-		return
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/x-ndjson")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return err
 	}
-	debugLog("info", "Received response from API:", apiResponse)
+	defer response.Body.Close()
 
-	clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
-	if err := json.NewEncoder(w).Encode(clientResp); err != nil {
-		debugLog("error", "Error encoding client response JSON: %s", err)
-		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		if err := fn(scanner.Bytes()); err != nil {
+			return err
+		}
 	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scanner error: %w", err)
+	}
+
+	return nil
 }
 
 func debugLog(errorType LogTypes, v ...interface{}) {
