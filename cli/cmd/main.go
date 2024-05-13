@@ -110,6 +110,7 @@ func main() {
 	}()
 
 	app := tview.NewApplication()
+	app.EnablePaste(true)
 
 	textArea := tview.NewTextArea()
 	textArea.SetTitle("Question").SetBorder(true)
@@ -122,7 +123,7 @@ func main() {
 		SetRegions(true).
 		SetWordWrap(true)
 
-	//Enable mouse to have mouse scrolling working. We dont need SetScrollable because it is 'true' by default
+	//Enable mouse to have mouse scrolling working. We don't need SetScrollable because it is 'true' by default
 	app.EnableMouse(true)
 
 	textView.SetTitle("Conversation").SetBorder(true)
@@ -170,15 +171,21 @@ func main() {
 			if strings.TrimSpace(content) == "" {
 				return nil
 			}
-			textArea.SetText("", false)
+			textArea.SetText("", true)
 			textArea.SetDisabled(true)
-			switch content {
+			switch strings.TrimSpace(content) {
 			case "/help":
 				fmt.Fprintln(textView, "[red::]You:[-]")
 				fmt.Fprintf(textView, "%s\n\n", content)
 
 				fmt.Fprintf(textView, "[green::]Bot:[-]\n")
-				fmt.Fprintf(textView, "%s\n\n", "you are helped")
+				fmt.Fprintf(textView, "Here are some commands you can use:\n")
+				fmt.Fprintf(textView, "- /help: Display this help message\n")
+				fmt.Fprintf(textView, "- /bye: Exit the application\n")
+				fmt.Fprintf(textView, "- /debug: Toggle the debug console\n")
+				fmt.Fprintf(textView, "- /voice: Activate voice commands\n\n")
+				textArea.SetDisabled(false)
+				return event
 
 				textArea.SetDisabled(false)
 				return event
@@ -188,9 +195,8 @@ func main() {
 				shutdown(app)
 				return nil
 			case "/debug":
-				debugLog("info", debugConsole, "debug hi.")
+				// toggling is no working if it is repeated execution
 				go func() {
-					debugLog("info", debugConsole, "debug hi. 2")
 					if debugConsole == nil {
 						app.QueueUpdateDraw(func() {
 							debugConsole = tview.NewTextView().
@@ -207,20 +213,26 @@ func main() {
 							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
 							fmt.Fprintf(textView, "Debug console enabled\n")
 						})
+					} else {
+						app.QueueUpdateDraw(func() {
+							mainFlex.RemoveItem(debugConsole)
+							debugConsole = nil
+							fmt.Fprintf(textView, "Debug console disabled\n")
+						})
 					}
 				}()
 
 				defer textArea.SetDisabled(false)
 				return event
+			case "/voice":
+
 			}
 			/*
 				'/' commands
 				/help - shows all available commands
 				/voice - enable voice recognition
-				/debug
 
 				enter: submit
-				scroll: up/down (mouse scroll) or (arrow keys)
 			*/
 
 			go func() {
