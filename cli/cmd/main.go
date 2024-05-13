@@ -11,6 +11,7 @@ import (
 	"github.com/rivo/tview"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -98,13 +99,13 @@ func main() {
 		http.HandleFunc("/process_text", processTextHandler)
 
 		address := ":" + strconv.Itoa(port)
-		debugLog("info", "Debug mode is enabled")
-		debugLog("info", "Server started on http://localhost"+address+"/")
+		debugLog("info", debugConsole, "Debug mode is enabled")
+		debugLog("info", debugConsole, "Server started on http://localhost"+address+"/")
 
 		// Start the server
 		err := http.ListenAndServe(address, nil)
 		if err != nil {
-			debugLog("error", "Error starting server: ", err)
+			debugLog("error", debugConsole, "Error starting server: ", err)
 		}
 	}()
 
@@ -171,10 +172,50 @@ func main() {
 			}
 			textArea.SetText("", false)
 			textArea.SetDisabled(true)
+			switch content {
+			case "/help":
+				fmt.Fprintln(textView, "[red::]You:[-]")
+				fmt.Fprintf(textView, "%s\n\n", content)
+
+				fmt.Fprintf(textView, "[green::]Bot:[-]\n")
+				fmt.Fprintf(textView, "%s\n\n", "you are helped")
+
+				textArea.SetDisabled(false)
+				return event
+			case "/bye":
+				fmt.Fprintf(textView, "Bye bye\n")
+				debugLog("info", debugConsole, "Exiting by command.")
+				shutdown(app)
+				return nil
+			case "/debug":
+				debugLog("info", debugConsole, "debug hi.")
+				go func() {
+					debugLog("info", debugConsole, "debug hi. 2")
+					if debugConsole == nil {
+						app.QueueUpdateDraw(func() {
+							debugConsole = tview.NewTextView().
+								SetChangedFunc(func() {
+									app.Draw()
+								}).
+								SetDynamicColors(true).
+								SetRegions(true).
+								SetWordWrap(true)
+
+							debugConsole.SetTitle("Debugger").SetBorder(true)
+							debugConsole.ScrollToEnd()
+
+							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
+							fmt.Fprintf(textView, "Debug console enabled\n")
+						})
+					}
+				}()
+
+				defer textArea.SetDisabled(false)
+				return event
+			}
 			/*
 				'/' commands
 				/help - shows all available commands
-				/bye - exit program || ctrl-c
 				/voice - enable voice recognition
 				/debug
 
@@ -187,17 +228,17 @@ func main() {
 				fmt.Fprintf(textView, "%s\n\n", content)
 
 				clientReq := ClientRequest{Model: "llama3", Text: content}
-				debugLog("info", "Sending request:", clientReq.Text)
+				debugLog("info", debugConsole, "Input request:", clientReq.Text)
 				requestData, err := json.Marshal(clientReq)
 				if err != nil {
-					debugLog("error", "Failed to serialize request: %s\n\n", err)
+					debugLog("error", debugConsole, "Failed to serialize request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
 
 				req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
 				if err != nil {
-					debugLog("error", "Failed to create request: %s\n\n", err)
+					debugLog("error", debugConsole, "Failed to create request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
@@ -207,7 +248,7 @@ func main() {
 				client := &http.Client{}
 				resp, err := client.Do(req)
 				if err != nil {
-					debugLog("error", "Failed to send request: %s\n\n", err)
+					debugLog("error", debugConsole, "Failed to send request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
@@ -222,7 +263,7 @@ func main() {
 					var clientResp ClientResponse
 					err := json.Unmarshal(scanner.Bytes(), &clientResp)
 					if err != nil {
-						debugLog("error", "Failed to decode response: %s\n\n", err)
+						debugLog("error", debugConsole, "Failed to decode response: %s\n\n", err)
 						continue
 					}
 					app.QueueUpdateDraw(func() {
@@ -230,7 +271,7 @@ func main() {
 					})
 				}
 				if err := scanner.Err(); err != nil {
-					debugLog("error", "Failed to read stream: %s\n\n", err)
+					debugLog("error", debugConsole, "Failed to read stream: %s\n\n", err)
 				}
 				textArea.SetDisabled(false)
 			}()
@@ -289,10 +330,10 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
 
 		if !apiResp.Done {
-			debugLog("info", "Received response:", apiResp.Message.Content)
+			debugLog("info", debugConsole, "Received response:", apiResp.Message.Content)
+		} else {
+			debugLog("info", debugConsole, "Completed response", string(bts))
 		}
-
-		debugLog("info", "Completed response", string(bts))
 
 		if err != nil {
 			return err
@@ -347,15 +388,21 @@ func (c *Client) stream(ctx context.Context, method string, path string, data an
 	return nil
 }
 
-func debugLog(errorType LogTypes, v ...interface{}) {
-	if debug {
+func shutdown(app *tview.Application) {
+	debugLog("info", debugConsole, "Shutting down gracefully.")
+	app.Stop()
+	os.Exit(0)
+}
+
+func debugLog(errorType LogTypes, debugView *tview.TextView, v ...interface{}) {
+	if debugConsole != nil {
 		switch errorType {
 		case Info:
-			fmt.Fprintf(debugConsole, "[green]DEBUG (Info): %v[-]\n", v)
+			fmt.Fprintf(debugView, "[green]DEBUG (Info): %v[-]\n", v)
 		case Error:
-			fmt.Fprintf(debugConsole, "[red]DEBUG (Error): %v[-]\n", v)
+			fmt.Fprintf(debugView, "[red]DEBUG (Error): %v[-]\n", v)
 		case Warning:
-			fmt.Fprintf(debugConsole, "[yellow]DEBUG (Warning): %v[-]\n", v)
+			fmt.Fprintf(debugView, "[yellow]DEBUG (Warning): %v[-]\n", v)
 		}
 	}
 }
