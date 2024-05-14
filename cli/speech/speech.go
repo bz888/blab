@@ -1,300 +1,268 @@
 package main
 
 import (
-	"bytes"
-	"crypto/md5"
-	"encoding/binary"
+	"context"
 	"fmt"
-	"github.com/go-audio/audio"
-	"github.com/go-audio/wav"
-	"github.com/gordonklaus/portaudio"
-	"github.com/mewkiz/flac"
-	"github.com/mewkiz/flac/frame"
-	"github.com/mewkiz/flac/meta"
+	"github.com/bz888/bad-siri/speech/sound"
+	vadlib "github.com/bz888/bad-siri/speech/vad"
 	"log"
+	"math"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/go-audio/audio"
+	"github.com/gordonklaus/portaudio"
 )
 
-type AudioData struct {
-	frameData   []byte
-	sampleRate  int
-	sampleWidth int
-}
+const (
+	//whisperHost    = "http://127.0.0.1:6001/inference"
+	sileroFilePath = "./silero_vad.onnx"
 
-func NewAudioData(frameData []byte, sampleRate, sampleWidth int) *AudioData {
-	return &AudioData{
-		frameData:   frameData,
-		sampleRate:  sampleRate,
-		sampleWidth: sampleWidth,
-	}
-}
+	minMicVolume   = 450
+	sendToVADDelay = time.Second
 
-func (a *AudioData) GetSegment(startMS, endMS *int) *AudioData {
-	startByte := 0
-	endByte := len(a.frameData)
+	// todo find google max duration
+	maxSegmentDuration = time.Second * 25
+)
 
-	if startMS != nil {
-		startByte = (*startMS * a.sampleRate * a.sampleWidth) / 1000
-	}
-
-	if endMS != nil {
-		endByte = (*endMS * a.sampleRate * a.sampleWidth) / 1000
-	}
-
-	return NewAudioData(a.frameData[startByte:endByte], a.sampleRate, a.sampleWidth)
-}
-
-func (a *AudioData) GetRawData(convertRate, convertWidth *int) ([]byte, error) {
-	rawData := a.frameData
-
-	if convertRate != nil && *convertRate != a.sampleRate {
-		rawData = resample(rawData, a.sampleRate, *convertRate, a.sampleWidth)
-		a.sampleRate = *convertRate
-	}
-
-	if convertWidth != nil && *convertWidth != a.sampleWidth {
-		rawData = convertSampleWidth(rawData, a.sampleWidth, *convertWidth)
-		a.sampleWidth = *convertWidth
-	}
-
-	return rawData, nil
-}
-
-func convertSampleWidth(data []byte, fromWidth, toWidth int) []byte {
-	inBuf := bytes.NewReader(data)
-	decoder := wav.NewDecoder(inBuf)
-	decoder.ReadInfo()
-	pcm, err := decoder.FullPCMBuffer()
-	if err != nil {
-		log.Fatalf("Error decoding PCM data: %v", err)
-	}
-
-	outBuf := new(bytes.Buffer)
-	switch {
-	case fromWidth == 1 && toWidth == 2:
-		for _, sample := range pcm.AsIntBuffer().Data {
-			binary.Write(outBuf, binary.LittleEndian, int16(sample)<<8)
-		}
-	case fromWidth == 2 && toWidth == 1:
-		for _, sample := range pcm.AsIntBuffer().Data {
-			outBuf.WriteByte(byte(sample >> 8))
-		}
-	case fromWidth == 2 && toWidth == 3:
-		for _, sample := range pcm.AsIntBuffer().Data {
-			sample24 := int32(sample) << 8
-			binary.Write(outBuf, binary.LittleEndian, sample24)
-		}
-	case fromWidth == 3 && toWidth == 2:
-		for i := 0; i < len(data); i += 3 {
-			sample24 := int32(data[i]) | int32(data[i+1])<<8 | int32(data[i+2])<<16
-			binary.Write(outBuf, binary.LittleEndian, int16(sample24>>8))
-		}
-	default:
-		return data
-	}
-
-	return outBuf.Bytes()
-}
-
-func resample(data []byte, fromRate, toRate, sampleWidth int) []byte {
-
-	if fromRate == toRate {
-		return data
-	}
-
-	inBuf := bytes.NewReader(data)
-	decoder := wav.NewDecoder(inBuf)
-	decoder.ReadInfo()
-	pcm, err := decoder.FullPCMBuffer()
-	if err != nil {
-		log.Fatalf("Error decoding PCM data: %v", err)
-	}
-	src := audio.IntBuffer{Format: &audio.Format{SampleRate: fromRate}, Data: pcm.AsIntBuffer().Data}
-	resampled := audio.IntBuffer{Format: &audio.Format{SampleRate: toRate}}
-
-	srcLen := len(src.Data)
-	dstLen := int(float64(srcLen) * float64(toRate) / float64(fromRate))
-	resampled.Data = make([]int, dstLen)
-
-	for i := 0; i < dstLen; i++ {
-		srcIndex := float64(i) * float64(srcLen-1) / float64(dstLen-1)
-		intPart := int(srcIndex)
-		fracPart := srcIndex - float64(intPart)
-		if intPart+1 < srcLen {
-			resampled.Data[i] = int(float64(src.Data[intPart])*(1-fracPart) + float64(src.Data[intPart+1])*fracPart)
-		} else {
-			resampled.Data[i] = src.Data[intPart]
-		}
-	}
-	outBuf := new(bytes.Buffer)
-	switch sampleWidth {
-	case 1:
-		for _, sample := range resampled.Data {
-			outBuf.WriteByte(byte(sample))
-		}
-	case 2:
-		for _, sample := range resampled.Data {
-			binary.Write(outBuf, binary.LittleEndian, int16(sample))
-		}
-	case 3:
-		for _, sample := range resampled.Data {
-			sample24 := int32(sample) << 8
-			binary.Write(outBuf, binary.LittleEndian, sample24)
-		}
-	}
-
-	return outBuf.Bytes()
-}
-
-func (a *AudioData) GetFLACData(convertRate, convertWidth *int) ([]byte, error) {
-	if convertWidth != nil && (*convertWidth < 1 || *convertWidth > 3) {
-		return nil, fmt.Errorf("sample width to convert to must be between 1 and 3 inclusive")
-	}
-
-	if a.sampleWidth > 3 && convertWidth == nil {
-		convertWidth = new(int)
-		*convertWidth = 3
-	}
-
-	wavData, err := a.GetWAVData(convertRate, convertWidth)
-	if err != nil {
-		return nil, err
-	}
-
-	return EncodeFLAC(wavData, a.sampleRate, a.sampleWidth)
-}
-
-func (a *AudioData) GetWAVData(convertRate, convertWidth *int) ([]byte, error) {
-	rawData, err := a.GetRawData(convertRate, convertWidth)
-	if err != nil {
-		return nil, err
-	}
-
-	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.LittleEndian, uint32(0x46464952)) // "RIFF"
-	binary.Write(buf, binary.LittleEndian, uint32(36+len(rawData)))
-	binary.Write(buf, binary.LittleEndian, uint32(0x45564157)) // "WAVE"
-	binary.Write(buf, binary.LittleEndian, uint32(0x20746d66)) // "fmt "
-	binary.Write(buf, binary.LittleEndian, uint32(16))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-	binary.Write(buf, binary.LittleEndian, uint16(a.sampleWidth))
-	binary.Write(buf, binary.LittleEndian, uint32(a.sampleRate))
-	binary.Write(buf, binary.LittleEndian, uint32(a.sampleRate*int(a.sampleWidth)))
-	binary.Write(buf, binary.LittleEndian, uint16(a.sampleWidth))
-	binary.Write(buf, binary.LittleEndian, uint16(a.sampleWidth*8))
-	binary.Write(buf, binary.LittleEndian, uint32(0x61746164)) // "data"
-	binary.Write(buf, binary.LittleEndian, uint32(len(rawData)))
-	buf.Write(rawData)
-
-	return buf.Bytes(), nil
-}
-
-func EncodeFLAC(wavData []byte, sampleRate, sampleWidth int) ([]byte, error) {
-	buf := new(bytes.Buffer)
-
-	md5Sum := md5.Sum(wavData)
-	streamInfo := &meta.StreamInfo{
-		BlockSizeMin:  16,
-		BlockSizeMax:  65535,
-		FrameSizeMin:  0,
-		FrameSizeMax:  0,
-		SampleRate:    uint32(sampleRate),
-		NChannels:     1,
-		BitsPerSample: uint8(sampleWidth * 8),
-		NSamples:      uint64(len(wavData) / sampleWidth),
-		MD5sum:        md5Sum,
-	}
-
-	enc, err := flac.NewEncoder(buf, streamInfo)
-	if err != nil {
-		return nil, err
-	}
-	defer enc.Close()
-
-	frameData := make([]int32, len(wavData)/sampleWidth)
-	for i := 0; i < len(wavData); i += sampleWidth {
-		switch sampleWidth {
-		case 1:
-			frameData[i/sampleWidth] = int32(wavData[i])
-		case 2:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint16(wavData[i:]))
-		case 3:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint32(wavData[i:])) & 0xFFFFFF
-		case 4:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint32(wavData[i:]))
-		}
-	}
-
-	flacFrame := &frame.Frame{
-		Header: frame.Header{
-			SampleRate:    uint32(sampleRate),
-			Channels:      1,
-			BitsPerSample: uint8(sampleWidth * 8),
-		},
-		Subframes: []*frame.Subframe{
-			{
-				Samples: frameData,
-			},
-		},
-	}
-
-	if err := enc.WriteFrame(flacFrame); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-func recordAudio(durationSec int) (*AudioData, error) {
+func main() {
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
-	in := make([]int16, 44100*durationSec)
-	stream, err := portaudio.OpenDefaultStream(1, 0, 44100, len(in), in)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// If there is no selected device, print all of them and exit.
+	args := os.Args[1:]
+	if len(args) == 0 {
+		printAvailableDevices()
+		return
+	}
+
+	selectedDevice, err := selectInputDevice(args)
 	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
-
-	log.Println("Starting audio recording")
-	if err := stream.Start(); err != nil {
-		return nil, err
-	}
-	if err := stream.Read(); err != nil {
-		return nil, err
+		log.Fatalf("select input device %s", err)
+		return
 	}
 
-	log.Println("Stopping audio recording")
-	if err := stream.Stop(); err != nil {
-		return nil, err
+	done := make(chan bool)
+	audioCtx, audioCancel := context.WithCancel(ctx)
+
+	// Set up the audio stream parameters for LINEAR16 PCM
+	in := make([]int16, 512*9) // Use int16 to capture 16-bit samples.
+	audioStream, err := portaudio.OpenDefaultStream(
+		selectedDevice.MaxInputChannels, 0, selectedDevice.DefaultSampleRate, len(in), &in,
+	)
+
+	log.Printf("opening stream:")
+
+	if err != nil {
+		log.Fatalf("opening stream: %v", err)
+		return
 	}
 
-	frameData := make([]byte, len(in)*2)
-	for i, sample := range in {
-		binary.LittleEndian.PutUint16(frameData[i*2:], uint16(sample))
+	// Start the audio stream
+	if err := audioStream.Start(); err != nil {
+		log.Fatalf("starting stream: %v", err)
+		return
 	}
 
-	return NewAudioData(frameData, 44100, 2), nil
+	// Silero VAD - pre-trained Voice Activity Detector. See: https://github.com/snakers4/silero-vad
+	sileroVAD, err := vadlib.NewSileroDetector(sileroFilePath)
+	if err != nil {
+		log.Fatalf("creating silero detector: %v", err)
+	}
+
+	log.Println("started")
+
+	var (
+		startListening time.Time
+		processChan    = make(chan []int16, 10)
+		outChan        = make(chan audio.Buffer, 10)
+		buffer         = make([]int16, 512*9)
+	)
+
+	go func() {
+		for {
+			select {
+			case <-audioCtx.Done():
+				if err := audioStream.Close(); err != nil {
+					log.Println(err)
+				}
+				log.Println("got audioCtx.Done exit gracefully...")
+				return
+			default:
+				// Read from the microphone
+				if err := audioStream.Read(); err != nil {
+					log.Printf("reading from stream: %v\n", err)
+					continue
+				}
+
+				volume := calculateRMS16(in)
+				if volume > minMicVolume {
+					startListening = time.Now()
+				}
+
+				if time.Since(startListening) < sendToVADDelay && time.Since(startListening) < maxSegmentDuration {
+					buffer = append(buffer, in...)
+
+					log.Println("listening...", volume)
+				} else if len(buffer) > 0 {
+					// Whisper and Silero accept audio with SampleRate = 16000.
+
+					// Resample also copies the buffer to another slice. Potentially, using a channel instead of a
+					// buffer can achieve better performance.
+					processChan <- sound.ResampleInt16(buffer, int(selectedDevice.DefaultSampleRate), 16000)
+					buffer = buffer[:0]
+				}
+			}
+		}
+	}()
+
+	// Responsible for checking recorded sections for the presence of the user's voice.
+	go vad(sileroVAD, processChan, outChan)
+	// Encodes the final sound into wav and sends to whisper.
+	//go process(whisperChan)
+
+	// Shutdown.
+	go func() {
+		<-ctx.Done()
+		if err := ctx.Err(); err != nil {
+			log.Println(fmt.Errorf("shutdown: %w", err))
+		}
+		audioCancel()
+		close(done)
+	}()
+
+	<-done
+	log.Println("finished")
 }
 
-func Run() {
-	audioData, err := recordAudio(5)
-	if err != nil {
-		log.Fatalf("Failed to record audio: %v", err)
+func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.Buffer) {
+	soundIntBuffer := &audio.IntBuffer{
+		Format: &audio.Format{SampleRate: 16000, NumChannels: 1},
 	}
 
-	flacData, err := audioData.GetFLACData(nil, nil)
-	if err != nil {
-		log.Fatalf("Failed to convert to FLAC: %v", err)
-	}
+	for {
+		soundIntBuffer.Data = sound.ConvertInt16ToInt(<-input)
 
-	if err := os.WriteFile("output.flac", flacData, 0644); err != nil {
-		log.Fatalf("Failed to write FLAC file: %v", err)
-	}
+		start := time.Now()
+		detected, err := silero.DetectVoice(soundIntBuffer)
+		if err != nil {
+			log.Println(fmt.Errorf("detect voice: %w", err))
+			continue
+		}
+		log.Println("voice detecting result", time.Since(start), detected)
 
-	fmt.Println("FLAC file written successfully")
+		if detected {
+			log.Println("sending to output...")
+
+			clonedBuffer := soundIntBuffer.Clone()
+
+			// Log the contents of the cloned buffer
+			log.Printf("Cloned buffer contents: %+v", clonedBuffer)
+
+			output <- clonedBuffer
+		}
+	}
 }
 
-func main() {
-	Run()
+// TODO use google api
+func process(in <-chan audio.Buffer) {
+	//api := whisper.NewServerApi(whisperHost, whisper.Config{
+	//	Temperature:    0,
+	//	TemperatureInc: 0.2,
+	//	Timeout:        time.Second * 6,
+	//})
+	//
+	//for {
+	//	data := <-in
+	//
+	//	// Emulate a file in RAM so that we don't have to create a real file.
+	//	file := &writerseeker.WriterSeeker{}
+	//	encoder := wav.NewEncoder(file, 16000, 16, 1, 1)
+	//
+	//	// Write the audio buffer to the WAV file using the encoder
+	//	if err := encoder.Write(data.AsIntBuffer()); err != nil {
+	//		log.Println(fmt.Errorf("encoder write buffer: %w", err))
+	//		return
+	//	}
+	//
+	//	// Close the encoder to finalize the WAV file headers
+	//	if err := encoder.Close(); err != nil {
+	//		log.Println(fmt.Errorf("encoder close: %w", err))
+	//		return
+	//	}
+	//
+	//	// Read all data from the reader into memory
+	//	wavData, err := io.ReadAll(file.Reader())
+	//	if err != nil {
+	//		log.Println(fmt.Errorf("reading file into memory: %w", err))
+	//		return
+	//	}
+	//
+	//	start := time.Now()
+	//	res, err := api.SendMultiPartForm(context.TODO(), wavData)
+	//	if err != nil {
+	//		log.Println(fmt.Errorf("sending multipart form: %w", err))
+	//		return
+	//	}
+	//
+	//	log.Println(fmt.Sprintf("done in: %s, result: %s", time.Since(start), res.Text))
+	//}
+}
+
+func printAvailableDevices() {
+	devices, err := portaudio.Devices()
+	if err != nil {
+		log.Fatalf("portaudio.Devices %s", err)
+		return
+	}
+	for i, device := range devices {
+		fmt.Printf(
+			"ID: %d, Name: %s, MaxInputChannels: %d, Sample rate: %f\n",
+			i,
+			device.Name,
+			device.MaxInputChannels,
+			device.DefaultSampleRate,
+		)
+	}
+}
+
+func selectInputDevice(args []string) (*portaudio.DeviceInfo, error) {
+	deviceID, err := strconv.Atoi(args[0])
+	if err != nil {
+		return nil, fmt.Errorf("parce int %w", err)
+	}
+
+	devices, err := portaudio.Devices()
+	if err != nil {
+		return nil, fmt.Errorf("select input device %w", err)
+	}
+
+	selectedDevice, err := portaudio.DefaultInputDevice()
+	if err != nil {
+		return nil, fmt.Errorf("find default device %w", err)
+	}
+
+	// Set default device to device with particular id
+	selectedDevice = devices[deviceID]
+
+	log.Println("selected device:", selectedDevice.Name, selectedDevice.DefaultSampleRate)
+
+	return selectedDevice, nil
+}
+
+// calculateRMS16 calculates the root-mean-square of the audio buffer for int16 samples.
+func calculateRMS16(buffer []int16) float64 {
+	var sumSquares float64
+	for _, sample := range buffer {
+		val := float64(sample) // Convert int16 to float64 for calculation
+		sumSquares += val * val
+	}
+	meanSquares := sumSquares / float64(len(buffer))
+	return math.Sqrt(meanSquares)
 }
