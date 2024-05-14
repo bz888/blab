@@ -247,6 +247,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+./cli/speech/.env
 .env
 .venv
 env/

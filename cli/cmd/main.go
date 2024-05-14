@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/bz888/bad-siri/speech"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -423,34 +421,4 @@ func debugLog(errorType LogTypes, debugView *tview.TextView, v ...interface{}) {
 			fmt.Fprintf(debugView, "[yellow]DEBUG (Warning): %v[-]\n", v)
 		}
 	}
-}
-
-func buildRecogniserRequest_google(audioData []byte) *http.Request {
-	apiURL := "http://www.google.com/speech-api/v2/recognize"
-	data := url.Values{}
-	data.Set("client", "chromium")
-	data.Set("lang", "en-US")
-	data.Set("key", "your-api-key")
-	data.Set("pFilter", "0")
-
-	req, err := http.NewRequest("POST", apiURL+"?"+data.Encode(), bytes.NewReader(audioData))
-	if err != nil {
-		fmt.Println(err)
-		return nil
-	}
-
-	req.Header.Add("Content-Type", "audio/x-flac; rate=16000")
-	return req
-}
-
-func sendRecogniserRequest_google(req *http.Request) {
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	fmt.Println(string(body))
 }

@@ -3,8 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/bz888/bad-siri/speech/convert"
+	"github.com/bz888/bad-siri/speech/output_api"
 	"github.com/bz888/bad-siri/speech/sound"
 	vadlib "github.com/bz888/bad-siri/speech/vad"
+	"github.com/go-audio/wav"
+	"github.com/orcaman/writerseeker"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -111,7 +116,7 @@ func main() {
 
 					log.Println("listening...", volume)
 				} else if len(buffer) > 0 {
-					// Whisper and Silero accept audio with SampleRate = 16000.
+					// Silero accept audio with SampleRate = 16000.
 
 					// Resample also copies the buffer to another slice. Potentially, using a channel instead of a
 					// buffer can achieve better performance.
@@ -124,8 +129,9 @@ func main() {
 
 	// Responsible for checking recorded sections for the presence of the user's voice.
 	go vad(sileroVAD, processChan, outChan)
-	// Encodes the final sound into wav and sends to whisper.
-	//go process(whisperChan)
+
+	// Encodes the final sound into wav -> flac
+	go process(outChan)
 
 	// Shutdown.
 	go func() {
@@ -159,60 +165,68 @@ func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.
 
 		if detected {
 			log.Println("sending to output...")
-
-			clonedBuffer := soundIntBuffer.Clone()
-
-			// Log the contents of the cloned buffer
-			log.Printf("Cloned buffer contents: %+v", clonedBuffer)
-
-			output <- clonedBuffer
+			output <- soundIntBuffer.Clone()
 		}
 	}
 }
 
-// TODO use google api
+// google api
 func process(in <-chan audio.Buffer) {
-	//api := whisper.NewServerApi(whisperHost, whisper.Config{
-	//	Temperature:    0,
-	//	TemperatureInc: 0.2,
-	//	Timeout:        time.Second * 6,
-	//})
-	//
-	//for {
-	//	data := <-in
-	//
-	//	// Emulate a file in RAM so that we don't have to create a real file.
-	//	file := &writerseeker.WriterSeeker{}
-	//	encoder := wav.NewEncoder(file, 16000, 16, 1, 1)
-	//
-	//	// Write the audio buffer to the WAV file using the encoder
-	//	if err := encoder.Write(data.AsIntBuffer()); err != nil {
-	//		log.Println(fmt.Errorf("encoder write buffer: %w", err))
-	//		return
-	//	}
-	//
-	//	// Close the encoder to finalize the WAV file headers
-	//	if err := encoder.Close(); err != nil {
-	//		log.Println(fmt.Errorf("encoder close: %w", err))
-	//		return
-	//	}
-	//
-	//	// Read all data from the reader into memory
-	//	wavData, err := io.ReadAll(file.Reader())
-	//	if err != nil {
-	//		log.Println(fmt.Errorf("reading file into memory: %w", err))
-	//		return
-	//	}
-	//
-	//	start := time.Now()
-	//	res, err := api.SendMultiPartForm(context.TODO(), wavData)
-	//	if err != nil {
-	//		log.Println(fmt.Errorf("sending multipart form: %w", err))
-	//		return
-	//	}
-	//
-	//	log.Println(fmt.Sprintf("done in: %s, result: %s", time.Since(start), res.Text))
-	//}
+	for {
+		data := <-in
+
+		// Emulate a file in RAM so that we don't have to create a real file.
+		file := &writerseeker.WriterSeeker{}
+		encoder := wav.NewEncoder(file, 16000, 16, 1, 1)
+
+		// Write the audio buffer to the WAV file using the encoder
+		if err := encoder.Write(data.AsIntBuffer()); err != nil {
+			log.Println(fmt.Errorf("encoder write buffer: %w", err))
+			return
+		}
+
+		// Close the encoder to finalize the WAV file headers
+		if err := encoder.Close(); err != nil {
+			log.Println(fmt.Errorf("encoder close: %w", err))
+			return
+		}
+
+		// Read all data from the reader into memory
+		wavData, err := io.ReadAll(file.Reader())
+		if err != nil {
+			log.Println(fmt.Errorf("reading WAV file into memory: %w", err))
+			return
+		}
+
+		log.Printf("WAV data length: %d bytes\n", len(wavData))
+		if len(wavData) == 0 {
+			log.Println("WAV data is empty")
+			return
+		}
+
+		log.Println("Encode to FLAC beginning")
+		//flacData, err := convert.EncodeFLAC(wavData, 16000, 2)
+		flacData, err := convert.EncodeFLACExecutable(wavData, 16000, 2)
+		if err != nil {
+			log.Println(fmt.Errorf("FLAC encoding error: %w", err))
+			return
+		}
+		log.Println("Encode to FLAC successfully")
+
+		if len(flacData) == 0 {
+			log.Println("FLAC data is empty")
+			return
+		}
+
+		start := time.Now()
+		resp, conf, err := output_api.Send(flacData)
+		if err != nil {
+			log.Println(fmt.Errorf("sending multipart form: %w", err))
+			return
+		}
+
+		log.Println(fmt.Sprintf("done in: %s, confidence: %s, result: %s", time.Since(start), string(rune(int(conf))), resp))
+	}
 }
 
 func printAvailableDevices() {
