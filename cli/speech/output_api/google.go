@@ -170,15 +170,16 @@ func sendRecogniserRequestGoogle(req *http.Request) (string, float64, error) {
 
 func Send(audioData []byte) (string, float64, error) {
 	req := buildRecogniserRequestGoogle(audioData)
+	log.Println("Received out request:", req)
 	if req == nil {
 		return "", 0, errors.New("failed to build request")
 	}
 
+	log.Println("Sent")
 	transcript, confidence, err := sendRecogniserRequestGoogle(req)
 	if err != nil {
 		return "", 0, err
 	}
 
-	log.Println("Sent")
 	return transcript, confidence, nil
 }

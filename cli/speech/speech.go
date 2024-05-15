@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +34,7 @@ const (
 	maxSegmentDuration = time.Second * 25
 )
 
-func main() {
+func Run() (string, error) {
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
@@ -44,13 +45,12 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
 		printAvailableDevices()
-		return
+		return "", fmt.Errorf("no device selected")
 	}
 
 	selectedDevice, err := selectInputDevice(args)
 	if err != nil {
 		log.Fatalf("select input device %s", err)
-		return
 	}
 
 	done := make(chan bool)
@@ -66,13 +66,11 @@ func main() {
 
 	if err != nil {
 		log.Fatalf("opening stream: %v", err)
-		return
 	}
 
 	// Start the audio stream
 	if err := audioStream.Start(); err != nil {
 		log.Fatalf("starting stream: %v", err)
-		return
 	}
 
 	// Silero VAD - pre-trained Voice Activity Detector. See: https://github.com/snakers4/silero-vad
@@ -88,6 +86,7 @@ func main() {
 		processChan    = make(chan []int16, 10)
 		outChan        = make(chan audio.Buffer, 10)
 		buffer         = make([]int16, 512*9)
+		resultChan     = make(chan string)
 	)
 
 	go func() {
@@ -131,7 +130,7 @@ func main() {
 	go vad(sileroVAD, processChan, outChan)
 
 	// Encodes the final sound into wav -> flac
-	go process(outChan)
+	var wg sync.WaitGroup
 
 	// Shutdown.
 	go func() {
@@ -143,8 +142,22 @@ func main() {
 		close(done)
 	}()
 
-	<-done
+	wg.Add(1)
+	go process(outChan, resultChan, &wg)
+
+	var result string
+	go func() {
+		for resp := range resultChan {
+			log.Println("Response:", resp)
+			result += resp + "\n"
+			wg.Done()
+		}
+	}()
+	wg.Wait()
+	close(resultChan)
+
 	log.Println("finished")
+	return result, nil
 }
 
 func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.Buffer) {
@@ -171,7 +184,8 @@ func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.
 }
 
 // google api
-func process(in <-chan audio.Buffer) {
+func process(in <-chan audio.Buffer, resultChan chan string, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		data := <-in
 
@@ -219,13 +233,15 @@ func process(in <-chan audio.Buffer) {
 		}
 
 		start := time.Now()
+		log.Println("Sending to out")
 		resp, conf, err := output_api.Send(flacData)
 		if err != nil {
 			log.Println(fmt.Errorf("sending multipart form: %w", err))
 			return
 		}
 
-		log.Println(fmt.Sprintf("done in: %s, confidence: %s, result: %s", time.Since(start), string(rune(int(conf))), resp))
+		resultChan <- resp
+		log.Println(fmt.Sprintf("done in: %s, confidence: %s, result: %s", time.Since(start), int(conf), resp))
 	}
 }
 

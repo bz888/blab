@@ -233,7 +233,7 @@ func main() {
 
 				// ping google speech api v2
 				debugLog("info", debugConsole, "Voice recogniser Started")
-				go speech.Run()
+				//go speech.Run()
 
 				debugLog("info", debugConsole, "Voice recogniser Completed")
 				textArea.SetDisabled(false)
