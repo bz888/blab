@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/bz888/blab/speech/speech"
+	logger "github.com/bz888/blab/utils"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Client struct {
@@ -65,25 +68,18 @@ const sampleRate = 16000
 const numChannels = 1
 const bitsPerSample = 16
 
-type LogTypes string
-
-const (
-	Error   LogTypes = "error"
-	Warning LogTypes = "warning"
-	Info    LogTypes = "info"
-)
-
 var debugConsole *tview.TextView
 var port = 8080
+var localLogger *logger.DebugLogger
 
 func init() {
 	flag.BoolVar(&debug, "debug", false, "enable debug output")
 	flag.Parse()
+	localLogger = logger.NewDebugLogger(debugConsole, "main")
 }
 
 func main() {
 	// Start the server in a goroutine to allow asynchronous execution
-
 	go func() {
 		http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 			status := struct {
@@ -103,13 +99,13 @@ func main() {
 		http.HandleFunc("/process_text", processTextHandler)
 
 		address := ":" + strconv.Itoa(port)
-		debugLog("info", debugConsole, "Debug mode is enabled")
-		debugLog("info", debugConsole, "Server started on http://localhost"+address+"/")
+		localLogger.Info("Debug mode is enabled")
+		localLogger.Info("Server started on http://localhost" + address + "/")
 
 		// Start the server
 		err := http.ListenAndServe(address, nil)
 		if err != nil {
-			debugLog("error", debugConsole, "Error starting server: ", err)
+			localLogger.Error("Error starting server: ", err)
 		}
 	}()
 
@@ -162,9 +158,13 @@ func main() {
 		debugConsole.ScrollToEnd()
 		mainFlex.
 			AddItem(debugConsole, 0, 1, false)
+
+		localLogger = logger.NewDebugLogger(debugConsole, "main")
 	}
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		var wg sync.WaitGroup
+
 		switch event.Key() {
 		case tcell.KeyESC:
 			if textView.GetText(false) != "" {
@@ -195,7 +195,7 @@ func main() {
 				return event
 			case "/bye":
 				fmt.Fprintf(textView, "Bye bye\n")
-				debugLog("info", debugConsole, "Exiting by command.")
+				localLogger.Info("Exiting by command.")
 				shutdown(app)
 				return nil
 			case "/debug":
@@ -215,6 +215,8 @@ func main() {
 							debugConsole.ScrollToEnd()
 
 							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
+
+							localLogger = logger.NewDebugLogger(debugConsole, "main")
 							fmt.Fprintf(textView, "Debug console enabled\n")
 						})
 					} else {
@@ -229,32 +231,48 @@ func main() {
 				defer textArea.SetDisabled(false)
 				return event
 			case "/voice":
-				// add a voice meter above the input
-
 				// ping google speech api v2
-				debugLog("info", debugConsole, "Voice recogniser Started")
-				//go speech.Run()
+				localLogger.Info("Voice recogniser Started")
+				var voiceContent string
+				var err error
+				//voiceContent, err := speech.Run()
+				//if err != nil {
+				//	log.Fatal("Failed on voice recogniser", err)
+				//}
 
-				debugLog("info", debugConsole, "Voice recogniser Completed")
-				textArea.SetDisabled(false)
-				return event
+				//speech.PrintAvailableDevices(debugConsole)
+				// Channel to signal completion of the goroutine
+
+				wg.Add(1)
+				go func() {
+					voiceContent, err = speech.Run(debugConsole)
+					if err != nil {
+						localLogger.Error("Failed to process voice")
+					}
+					wg.Done()
+				}()
+
+				localLogger.Info("Voice recognizer Completed")
+				content = voiceContent
 			}
+
+			wg.Wait()
 			go func() {
 				fmt.Fprintln(textView, "[red::]You:[-]")
 				fmt.Fprintf(textView, "%s\n\n", content)
 
 				clientReq := ClientRequest{Model: "llama3", Text: content}
-				debugLog("info", debugConsole, "Input request:", clientReq.Text)
+				localLogger.Info("Input request:", clientReq.Text)
 				requestData, err := json.Marshal(clientReq)
 				if err != nil {
-					debugLog("error", debugConsole, "Failed to serialize request: %s\n\n", err)
+					localLogger.Error("Failed to serialize request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
 
 				req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
 				if err != nil {
-					debugLog("error", debugConsole, "Failed to create request: %s\n\n", err)
+					localLogger.Error("Failed to create request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
@@ -264,7 +282,7 @@ func main() {
 				client := &http.Client{}
 				resp, err := client.Do(req)
 				if err != nil {
-					debugLog("error", debugConsole, "Failed to send request: %s\n\n", err)
+					localLogger.Error("Failed to send request: %s\n\n", err)
 					textArea.SetDisabled(false)
 					return
 				}
@@ -279,7 +297,7 @@ func main() {
 					var clientResp ClientResponse
 					err := json.Unmarshal(scanner.Bytes(), &clientResp)
 					if err != nil {
-						debugLog("error", debugConsole, "Failed to decode response: %s\n\n", err)
+						localLogger.Error("Failed to decode response: %s\n\n", err)
 						continue
 					}
 					app.QueueUpdateDraw(func() {
@@ -287,7 +305,7 @@ func main() {
 					})
 				}
 				if err := scanner.Err(); err != nil {
-					debugLog("error", debugConsole, "Failed to read stream: %s\n\n", err)
+					localLogger.Error("Failed to read stream: %s\n\n", err)
 				}
 				textArea.SetDisabled(false)
 			}()
@@ -301,6 +319,7 @@ func main() {
 		panic(err)
 	}
 }
+
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
@@ -346,9 +365,9 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
 
 		if !apiResp.Done {
-			debugLog("info", debugConsole, "Received response:", apiResp.Message.Content)
+			localLogger.Info("Received response:", apiResp.Message.Content)
 		} else {
-			debugLog("info", debugConsole, "Completed response", string(bts))
+			localLogger.Info("Completed response", string(bts))
 		}
 
 		if err != nil {
@@ -405,20 +424,7 @@ func (c *Client) stream(ctx context.Context, method string, path string, data an
 }
 
 func shutdown(app *tview.Application) {
-	debugLog("info", debugConsole, "Shutting down gracefully.")
+	localLogger.Info("Shutting down gracefully.")
 	app.Stop()
 	os.Exit(0)
-}
-
-func debugLog(errorType LogTypes, debugView *tview.TextView, v ...interface{}) {
-	if debugConsole != nil {
-		switch errorType {
-		case Info:
-			fmt.Fprintf(debugView, "[green]DEBUG (Info): %v[-]\n", v)
-		case Error:
-			fmt.Fprintf(debugView, "[red]DEBUG (Error): %v[-]\n", v)
-		case Warning:
-			fmt.Fprintf(debugView, "[yellow]DEBUG (Warning): %v[-]\n", v)
-		}
-	}
 }

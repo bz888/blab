@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	logger "github.com/bz888/blab/utils"
 	"github.com/joho/godotenv"
+	"github.com/rivo/tview"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,10 +34,12 @@ type OutputParser struct {
 	WithConfidence bool
 }
 
+var localLogger *logger.DebugLogger
+
 func buildRecogniserRequestGoogle(audioData []byte) *http.Request {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatalf("Error loadin .env file: %v", err)
+		localLogger.Fatal("Error loadin .env file: %v", err)
 	}
 
 	key := os.Getenv("API_KEY")
@@ -67,10 +70,9 @@ func convertToResult(responseText string) (Result, error) {
 			return Result{}, err
 		}
 
-		log.Println(responseText)
 		if len(response.Result) != 0 {
 			if len(response.Result[0].Alternative) == 0 {
-				log.Println("No alternatives found in the result.")
+				localLogger.Info("No alternatives found in the result.")
 				return Result{}, errors.New("no alternatives found")
 			}
 			return response.Result[0], nil
@@ -95,7 +97,7 @@ func findBestHypothesis(alternatives []Alternative) (Alternative, error) {
 	}
 
 	if bestHypothesis.Transcript == "" {
-		log.Println("Best hypothesis does not have a transcript.")
+		localLogger.Info("Best hypothesis does not have a transcript.")
 		return Alternative{}, errors.New("best hypothesis does not have a transcript")
 	}
 
@@ -133,27 +135,27 @@ func sendRecogniserRequestGoogle(req *http.Request) (string, float64, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("Error sending request:", err)
+		localLogger.Error("Error sending request:", err)
 		return "", 0, err
 	}
 	defer resp.Body.Close()
 
-	log.Printf("Response Status: %s\n", resp.Status)
+	localLogger.Info("Response Status: %s\n", resp.Status)
 
 	// Log the response headers
-	log.Println("Response Headers:")
-	for key, values := range resp.Header {
-		for _, value := range values {
-			log.Printf("%s: %s\n", key, value)
-		}
-	}
+	//localLogger.Info("Response Headers:")
+	//for key, values := range resp.Header {
+	//	for _, value := range values {
+	//		localLogger.Info("%s: %s\n", key, value)
+	//	}
+	//}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Println("Error reading response body:", err)
+		localLogger.Info("Error reading response body:", err)
 		return "", 0, err
 	}
-	log.Printf("Response Body: %s\n", string(body))
+	//localLogger.Info("Response Body: %s\n", string(body))
 
 	op := OutputParser{
 		ShowAll:        false,
@@ -168,14 +170,15 @@ func sendRecogniserRequestGoogle(req *http.Request) (string, float64, error) {
 	return transcript, confidence, nil
 }
 
-func Send(audioData []byte) (string, float64, error) {
+func Send(audioData []byte, debugConsole *tview.TextView) (string, float64, error) {
+	localLogger = logger.NewDebugLogger(debugConsole, "google")
+
 	req := buildRecogniserRequestGoogle(audioData)
-	log.Println("Received out request:", req)
 	if req == nil {
 		return "", 0, errors.New("failed to build request")
 	}
 
-	log.Println("Sent")
+	localLogger.Info("Sent")
 	transcript, confidence, err := sendRecogniserRequestGoogle(req)
 	if err != nil {
 		return "", 0, err

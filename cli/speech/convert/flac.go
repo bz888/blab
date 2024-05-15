@@ -9,7 +9,6 @@ import (
 	"github.com/mewkiz/flac"
 	"github.com/mewkiz/flac/frame"
 	"github.com/mewkiz/flac/meta"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +71,7 @@ func EncodeFLAC(wavData []byte, sampleRate, sampleWidth int) ([]byte, error) {
 			},
 		}
 
-		log.Printf("Writing FLAC frame with %d samples\n", len(frameData[i:end]))
+		//log.Printf("Writing FLAC frame with %d samples\n", len(frameData[i:end]))
 
 		if err := enc.WriteFrame(flacFrame); err != nil {
 			return nil, fmt.Errorf("writing FLAC frame: %w", err)

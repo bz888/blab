@@ -3,17 +3,19 @@ package speech
 import (
 	"context"
 	"fmt"
-	"github.com/bz888/bad-siri/speech/convert"
-	"github.com/bz888/bad-siri/speech/output_api"
-	"github.com/bz888/bad-siri/speech/sound"
-	vadlib "github.com/bz888/bad-siri/speech/vad"
+	"github.com/bz888/blab/speech/convert"
+	"github.com/bz888/blab/speech/output_api"
+	"github.com/bz888/blab/speech/sound"
+	vadlib "github.com/bz888/blab/speech/vad"
+	logger "github.com/bz888/blab/utils"
 	"github.com/go-audio/wav"
 	"github.com/orcaman/writerseeker"
+	"github.com/rivo/tview"
 	"io"
-	"log"
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -24,17 +26,27 @@ import (
 )
 
 const (
-	//whisperHost    = "http://127.0.0.1:6001/inference"
-	sileroFilePath = "./silero_vad.onnx"
-
-	minMicVolume   = 450
-	sendToVADDelay = time.Second
-
-	// todo find google max duration
+	minMicVolume       = 450
+	sendToVADDelay     = time.Second
 	maxSegmentDuration = time.Second * 25
 )
 
-func Run() (string, error) {
+var sileroFilePath string
+var localLogger *logger.DebugLogger
+var _debugConsole *tview.TextView
+
+func init() {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		localLogger.Fatal("Failed to determine working directory: %v", err)
+	}
+	sileroFilePath = filepath.Join(workingDir, "silero_vad.onnx")
+}
+
+func Run(debugConsole *tview.TextView) (string, error) {
+	_debugConsole = debugConsole
+	localLogger = logger.NewDebugLogger(debugConsole, "speech")
+
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
@@ -43,14 +55,23 @@ func Run() (string, error) {
 
 	// If there is no selected device, print all of them and exit.
 	args := os.Args[1:]
-	if len(args) == 0 {
-		printAvailableDevices()
-		return "", fmt.Errorf("no device selected")
-	}
+	var selectedDevice *portaudio.DeviceInfo
+	var err error
 
-	selectedDevice, err := selectInputDevice(args)
-	if err != nil {
-		log.Fatalf("select input device %s", err)
+	if len(args) == 0 {
+		// No device specified, use default input device
+		selectedDevice, err = portaudio.DefaultInputDevice()
+		if err != nil {
+			localLogger.Fatal("failed to get default input device: %s", err)
+		}
+		PrintAvailableDevices()
+		localLogger.Info("Using default input device: %s", selectedDevice.Name)
+	} else {
+		// Select the device based on argument
+		selectedDevice, err = selectInputDevice(args)
+		if err != nil {
+			localLogger.Fatal("select input device %s", err)
+		}
 	}
 
 	done := make(chan bool)
@@ -62,24 +83,20 @@ func Run() (string, error) {
 		selectedDevice.MaxInputChannels, 0, selectedDevice.DefaultSampleRate, len(in), &in,
 	)
 
-	log.Printf("opening stream:")
-
 	if err != nil {
-		log.Fatalf("opening stream: %v", err)
+		localLogger.Fatal("opening stream: %v", err)
 	}
 
 	// Start the audio stream
 	if err := audioStream.Start(); err != nil {
-		log.Fatalf("starting stream: %v", err)
+		localLogger.Fatal("starting stream: %v", err)
 	}
 
 	// Silero VAD - pre-trained Voice Activity Detector. See: https://github.com/snakers4/silero-vad
 	sileroVAD, err := vadlib.NewSileroDetector(sileroFilePath)
 	if err != nil {
-		log.Fatalf("creating silero detector: %v", err)
+		localLogger.Fatal("creating silero detector: %v", err)
 	}
-
-	log.Println("started")
 
 	var (
 		startListening time.Time
@@ -94,14 +111,14 @@ func Run() (string, error) {
 			select {
 			case <-audioCtx.Done():
 				if err := audioStream.Close(); err != nil {
-					log.Println(err)
+					localLogger.Error(err)
 				}
-				log.Println("got audioCtx.Done exit gracefully...")
+				localLogger.Error("got audioCtx.Done exit gracefully...")
 				return
 			default:
 				// Read from the microphone
 				if err := audioStream.Read(); err != nil {
-					log.Printf("reading from stream: %v\n", err)
+					localLogger.Info("reading from stream: %v\n", err)
 					continue
 				}
 
@@ -113,7 +130,7 @@ func Run() (string, error) {
 				if time.Since(startListening) < sendToVADDelay && time.Since(startListening) < maxSegmentDuration {
 					buffer = append(buffer, in...)
 
-					log.Println("listening...", volume)
+					localLogger.Info("listening...", volume)
 				} else if len(buffer) > 0 {
 					// Silero accept audio with SampleRate = 16000.
 
@@ -136,7 +153,7 @@ func Run() (string, error) {
 	go func() {
 		<-ctx.Done()
 		if err := ctx.Err(); err != nil {
-			log.Println(fmt.Errorf("shutdown: %w", err))
+			localLogger.Error(fmt.Errorf("shutdown: %w", err))
 		}
 		audioCancel()
 		close(done)
@@ -148,7 +165,7 @@ func Run() (string, error) {
 	var result string
 	go func() {
 		for resp := range resultChan {
-			log.Println("Response:", resp)
+			localLogger.Info("Response:", resp)
 			result += resp + "\n"
 			wg.Done()
 		}
@@ -156,7 +173,7 @@ func Run() (string, error) {
 	wg.Wait()
 	close(resultChan)
 
-	log.Println("finished")
+	localLogger.Info("finished")
 	return result, nil
 }
 
@@ -171,13 +188,13 @@ func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.
 		start := time.Now()
 		detected, err := silero.DetectVoice(soundIntBuffer)
 		if err != nil {
-			log.Println(fmt.Errorf("detect voice: %w", err))
+			localLogger.Info(fmt.Errorf("detect voice: %w", err))
 			continue
 		}
-		log.Println("voice detecting result", time.Since(start), detected)
+		localLogger.Info("voice detecting result", time.Since(start), detected)
 
 		if detected {
-			log.Println("sending to output...")
+			localLogger.Info("sending to output...")
 			output <- soundIntBuffer.Clone()
 		}
 	}
@@ -195,64 +212,64 @@ func process(in <-chan audio.Buffer, resultChan chan string, wg *sync.WaitGroup)
 
 		// Write the audio buffer to the WAV file using the encoder
 		if err := encoder.Write(data.AsIntBuffer()); err != nil {
-			log.Println(fmt.Errorf("encoder write buffer: %w", err))
+			localLogger.Info(fmt.Errorf("encoder write buffer: %w", err))
 			return
 		}
 
 		// Close the encoder to finalize the WAV file headers
 		if err := encoder.Close(); err != nil {
-			log.Println(fmt.Errorf("encoder close: %w", err))
+			localLogger.Info(fmt.Errorf("encoder close: %w", err))
 			return
 		}
 
 		// Read all data from the reader into memory
 		wavData, err := io.ReadAll(file.Reader())
 		if err != nil {
-			log.Println(fmt.Errorf("reading WAV file into memory: %w", err))
+			localLogger.Info(fmt.Errorf("reading WAV file into memory: %w", err))
 			return
 		}
 
-		log.Printf("WAV data length: %d bytes\n", len(wavData))
+		localLogger.Info("WAV data length: %d bytes\n", len(wavData))
 		if len(wavData) == 0 {
-			log.Println("WAV data is empty")
+			localLogger.Error("WAV data is empty")
 			return
 		}
 
-		log.Println("Encode to FLAC beginning")
+		localLogger.Info("Encode to FLAC beginning")
 		//flacData, err := convert.EncodeFLAC(wavData, 16000, 2)
 		flacData, err := convert.EncodeFLACExecutable(wavData, 16000, 2)
 		if err != nil {
-			log.Println(fmt.Errorf("FLAC encoding error: %w", err))
+			localLogger.Error(fmt.Errorf("FLAC encoding error: %w", err))
 			return
 		}
-		log.Println("Encode to FLAC successfully")
+		localLogger.Info("Encode to FLAC successfully")
 
 		if len(flacData) == 0 {
-			log.Println("FLAC data is empty")
+			localLogger.Error("FLAC data is empty")
 			return
 		}
 
 		start := time.Now()
-		log.Println("Sending to out")
-		resp, conf, err := output_api.Send(flacData)
+		localLogger.Info("Sending to out")
+		resp, conf, err := output_api.Send(flacData, _debugConsole)
 		if err != nil {
-			log.Println(fmt.Errorf("sending multipart form: %w", err))
+			localLogger.Error(fmt.Errorf("sending multipart form: %w", err))
 			return
 		}
 
 		resultChan <- resp
-		log.Println(fmt.Sprintf("done in: %s, confidence: %s, result: %s", time.Since(start), int(conf), resp))
+		localLogger.Info(fmt.Sprintf("done in: %s, confidence: %s, result: %s", time.Since(start), int(conf), resp))
 	}
 }
 
-func printAvailableDevices() {
+func PrintAvailableDevices() {
 	devices, err := portaudio.Devices()
 	if err != nil {
-		log.Fatalf("portaudio.Devices %s", err)
+		localLogger.Fatal("portaudio.Devices %s", err)
 		return
 	}
 	for i, device := range devices {
-		fmt.Printf(
+		localLogger.Info(
 			"ID: %d, Name: %s, MaxInputChannels: %d, Sample rate: %f\n",
 			i,
 			device.Name,
@@ -281,7 +298,7 @@ func selectInputDevice(args []string) (*portaudio.DeviceInfo, error) {
 	// Set default device to device with particular id
 	selectedDevice = devices[deviceID]
 
-	log.Println("selected device:", selectedDevice.Name, selectedDevice.DefaultSampleRate)
+	localLogger.Info("selected device:", selectedDevice.Name, selectedDevice.DefaultSampleRate)
 
 	return selectedDevice, nil
 }

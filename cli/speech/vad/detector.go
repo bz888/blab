@@ -1,7 +1,6 @@
 package vad
 
 import (
-	"log"
 	"time"
 )
 
@@ -38,7 +37,7 @@ func (d *Detector) HearSomething(samples []byte) bool {
 	}
 
 	if time.Since(d.start) < d.quietTimeDelay {
-		log.Println("delay")
+		//log.Println("delay")
 		return true
 	}
 
