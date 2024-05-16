@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	logger "github.com/bz888/blab/utils"
+	"github.com/rivo/tview"
 	"log"
 	"net/http"
 	"net/url"
@@ -56,6 +58,12 @@ type ClientResponse struct {
 var host = "localhost:11434"
 var port = 8080
 
+var localLogger *logger.DebugLogger
+
+func InitService(debugConsole *tview.TextView, dev bool) {
+	localLogger = logger.NewLogger(debugConsole, dev, "server")
+}
+
 // Handler function that processes text
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
@@ -100,12 +108,11 @@ func processTextHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
-
-		//if !apiResp.Done {
-		//	localLogger.Info("Received response:", apiResp.Message.Content)
-		//} else {
-		//	localLogger.Info("Completed response", string(bts))
-		//}
+		if !apiResp.Done {
+			localLogger.Info("Received response:", apiResp.Message.Content)
+		} else {
+			localLogger.Info("Completed response", string(bts))
+		}
 
 		if err != nil {
 			return err
@@ -137,8 +144,8 @@ func Run() {
 	http.HandleFunc("/process_text", processTextHandler)
 
 	address := ":" + strconv.Itoa(port)
-	log.Println("Debug mode is enabled")
-	log.Println("Server started on http://localhost" + address + "/")
+	localLogger.Info("Debug mode is enabled")
+	localLogger.Info("Server started on http://localhost" + address + "/")
 
 	// Start the server
 	err := http.ListenAndServe(address, nil)

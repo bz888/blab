@@ -2,7 +2,6 @@ package speech
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/bz888/blab/speech/convert"
 	"github.com/bz888/blab/speech/output_api"
@@ -33,8 +32,12 @@ const (
 )
 
 var sileroFilePath = "./silero_vad.onnx"
-var localLogger *logger.DebugLogger = nil
-var _debugConsole *tview.TextView = nil
+
+var localLogger *logger.DebugLogger
+
+func InitService(debugConsole *tview.TextView, dev bool) {
+	localLogger = logger.NewLogger(debugConsole, dev, "speech")
+}
 
 func init() {
 	workingDir, err := os.Getwd()
@@ -44,14 +47,7 @@ func init() {
 	sileroFilePath = filepath.Join(workingDir, "./silero_vad.onnx")
 }
 
-func Run(debugConsole *tview.TextView) (string, error) {
-	_debugConsole = debugConsole
-	localLogger = logger.NewDebugLogger(debugConsole, "speech")
-
-	if debugConsole == nil {
-		return "", errors.New("debugConsole is nil")
-	}
-
+func Run() (string, error) {
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
@@ -256,7 +252,7 @@ func process(in <-chan audio.Buffer, resultChan chan string, wg *sync.WaitGroup)
 
 		start := time.Now()
 		localLogger.Info("Sending to out")
-		resp, conf, err := output_api.Send(flacData, _debugConsole)
+		resp, conf, err := output_api.Send(flacData)
 		if err != nil {
 			localLogger.Error(fmt.Errorf("sending multipart form: %w", err))
 			return

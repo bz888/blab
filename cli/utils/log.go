@@ -3,6 +3,7 @@ package log
 import (
 	"fmt"
 	"github.com/rivo/tview"
+	"os"
 )
 
 type Types int
@@ -15,16 +16,17 @@ const (
 )
 
 type DebugLogger struct {
-	debugView *tview.TextView
-	file      string
+	view *tview.TextView
+	file string
+	dev  bool
 }
 
-func NewDebugLogger(debugView *tview.TextView, fileName string) *DebugLogger {
-	return &DebugLogger{debugView: debugView, file: fileName}
+func NewLogger(debugView *tview.TextView, dev bool, fileName string) *DebugLogger {
+	return &DebugLogger{view: debugView, file: fileName, dev: dev}
 }
 
 func (d *DebugLogger) log(errorType Types, v ...interface{}) {
-	if d != nil {
+	if d.view != nil {
 		var format string
 		switch errorType {
 		case Info:
@@ -37,9 +39,17 @@ func (d *DebugLogger) log(errorType Types, v ...interface{}) {
 			format = "[red]DEBUG (%s): %s[-]\n"
 		}
 		message := fmt.Sprint(v...)
-		fmt.Fprintf(d.debugView, format, d.file, message)
+		fmt.Fprintf(d.view, format, d.file, message)
 	}
 
+	//if d.dev {
+	//	switch errorType {
+	//	case Fatal:
+	//		log.Fatal(v...)
+	//	default:
+	//		log.Println(v...)
+	//	}
+	//}
 }
 
 func (d *DebugLogger) Info(v ...interface{}) {
@@ -55,4 +65,5 @@ func (d *DebugLogger) Warning(v ...interface{}) {
 }
 func (d *DebugLogger) Fatal(v ...interface{}) {
 	d.log(Fatal, v...)
+	os.Exit(1)
 }

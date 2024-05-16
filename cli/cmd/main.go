@@ -7,50 +7,20 @@ import (
 	"flag"
 	"fmt"
 	server "github.com/bz888/blab/api"
+	"github.com/bz888/blab/speech/output_api"
 	"github.com/bz888/blab/speech/speech"
 	logger "github.com/bz888/blab/utils"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 )
-
-type Client struct {
-	base *url.URL
-	http *http.Client
-}
 
 // ClientRequest Request from client
 type ClientRequest struct {
 	Text  string `json:"text"`
 	Model string `json:"model"`
-}
-
-// APIRequest Request to external API
-type APIRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type APIResponse struct {
-	Model              string  `json:"model"`
-	CreatedAt          string  `json:"created_at"`
-	Message            Message `json:"message"`
-	Done               bool    `json:"done"`
-	TotalDuration      int64   `json:"total_duration"`
-	LoadDuration       int64   `json:"load_duration"`
-	PromptEvalCount    int     `json:"prompt_eval_count"`
-	PromptEvalDuration int64   `json:"prompt_eval_duration"`
-	EvalCount          int     `json:"eval_count"`
-	EvalDuration       int64   `json:"eval_duration"`
 }
 
 // ClientResponse Response to client
@@ -59,30 +29,19 @@ type ClientResponse struct {
 }
 
 var (
-	debug bool
+	dev          bool
+	debugConsole *tview.TextView
 )
 
+// if dev is true, then should init on new window, so logging can be seen in terminal
 func init() {
-	flag.BoolVar(&debug, "debug", false, "enable debug output")
+	flag.BoolVar(&dev, "dev", false, "Development mode")
 	flag.Parse()
 }
 
 func main() {
+	localLogger := logger.NewLogger(debugConsole, dev, "main")
 	app := tview.NewApplication()
-
-	debugConsole := tview.NewTextView().
-		SetChangedFunc(func() {
-			app.Draw()
-		}).
-		SetDynamicColors(true).
-		SetRegions(true).
-		SetWordWrap(true)
-
-	localLogger := logger.NewDebugLogger(debugConsole, "main")
-
-	go server.Run()
-
-	// Start the server in a goroutine to allow asynchronous execution
 	app.EnablePaste(true)
 
 	textArea := tview.NewTextArea()
@@ -96,11 +55,10 @@ func main() {
 		SetRegions(true).
 		SetWordWrap(true)
 
-	//Enable mouse to have mouse scrolling working. We don't need SetScrollable because it is 'true' by default
 	app.EnableMouse(true)
 
 	textView.SetTitle("Conversation").SetBorder(true)
-	// textView.SetScrollable(true)
+	textView.SetScrollable(true)
 	textView.ScrollToEnd()
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -118,11 +76,20 @@ func main() {
 	mainFlex := tview.NewFlex().
 		AddItem(subFlex, 0, 2, false)
 
-	if debug {
-		mainFlex.
-			AddItem(debugConsole, 0, 1, false)
+	if dev {
+		debugConsole = tview.NewTextView().
+			SetChangedFunc(func() {
+				app.Draw()
+			}).
+			SetDynamicColors(true).
+			SetRegions(true).
+			SetWordWrap(true)
+
 		debugConsole.SetTitle("Debugger").SetBorder(true)
 		debugConsole.ScrollToEnd()
+
+		localLogger = logger.NewLogger(debugConsole, dev, "main")
+		mainFlex.AddItem(debugConsole, 0, 1, true)
 	}
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -157,7 +124,7 @@ func main() {
 			case "/bye":
 				fmt.Fprintf(textView, "Bye bye\n")
 
-				func() {
+				go func() {
 					localLogger.Info("Exiting by command.")
 					localLogger.Info("Shutting down gracefully.")
 					app.Stop()
@@ -167,9 +134,8 @@ func main() {
 				return nil
 			case "/debug":
 				go func() {
+					// todo should be based on if the item is apart of the mainFlex
 					if debugConsole == nil {
-						debug = true
-
 						app.QueueUpdateDraw(func() {
 							debugConsole = tview.NewTextView().
 								SetChangedFunc(func() {
@@ -184,17 +150,16 @@ func main() {
 
 							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
 
-							localLogger = logger.NewDebugLogger(debugConsole, "main")
+							localLogger = logger.NewLogger(debugConsole, dev, "main")
 							fmt.Fprintf(textView, "Debug console enabled\n")
 						})
 					} else {
+						// toggle does not work, as it changes the address ?
 						app.QueueUpdateDraw(func() {
 							mainFlex.RemoveItem(debugConsole)
-							debugConsole = nil
+
 							fmt.Fprintf(textView, "Debug console disabled\n")
 						})
-
-						debug = false
 					}
 				}()
 
@@ -214,7 +179,7 @@ func main() {
 				// Channel to signal completion of the goroutine
 
 				go func() {
-					voiceContent, err = speech.Run(debugConsole)
+					voiceContent, err = speech.Run()
 					if err != nil {
 						localLogger.Error("Failed to process voice")
 					}
@@ -222,7 +187,7 @@ func main() {
 
 				localLogger.Info("Voice recognizer Completed")
 				content = voiceContent
-				return event
+				//return event
 			}
 
 			go func() {
@@ -275,13 +240,21 @@ func main() {
 				if err := scanner.Err(); err != nil {
 					localLogger.Error("Failed to read stream: %s\n\n", err)
 				}
-				textArea.SetDisabled(false)
 			}()
 
+			textArea.SetDisabled(false)
 			return event
 		}
 		return event
 	})
+
+	// init services
+	server.InitService(debugConsole, dev)
+	output_api.InitService(debugConsole, dev)
+	speech.InitService(debugConsole, dev)
+
+	go server.Run()
+	//go app.Run()
 
 	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)

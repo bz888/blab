@@ -34,7 +34,11 @@ type OutputParser struct {
 	WithConfidence bool
 }
 
-var localLogger *logger.DebugLogger = nil
+var localLogger *logger.DebugLogger
+
+func InitService(debugConsole *tview.TextView, dev bool) {
+	localLogger = logger.NewLogger(debugConsole, dev, "google")
+}
 
 func buildRecogniserRequestGoogle(audioData []byte) *http.Request {
 	err := godotenv.Load()
@@ -155,7 +159,6 @@ func sendRecogniserRequestGoogle(req *http.Request) (string, float64, error) {
 		localLogger.Info("Error reading response body:", err)
 		return "", 0, err
 	}
-	//localLogger.Info("Response Body: %s\n", string(body))
 
 	op := OutputParser{
 		ShowAll:        false,
@@ -170,9 +173,7 @@ func sendRecogniserRequestGoogle(req *http.Request) (string, float64, error) {
 	return transcript, confidence, nil
 }
 
-func Send(audioData []byte, debugConsole *tview.TextView) (string, float64, error) {
-	localLogger = logger.NewDebugLogger(debugConsole, "google")
-
+func Send(audioData []byte) (string, float64, error) {
 	req := buildRecogniserRequestGoogle(audioData)
 	if req == nil {
 		return "", 0, errors.New("failed to build request")
