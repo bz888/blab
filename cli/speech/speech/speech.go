@@ -150,16 +150,6 @@ func Run() (string, error) {
 	// Encodes the final sound into wav -> flac
 	var wg sync.WaitGroup
 
-	// Shutdown.
-	go func() {
-		<-ctx.Done()
-		if err := ctx.Err(); err != nil {
-			localLogger.Error(fmt.Errorf("shutdown: %w", err))
-		}
-		audioCancel()
-		close(done)
-	}()
-
 	wg.Add(1)
 	go process(outChan, resultChan, &wg)
 
@@ -175,6 +165,17 @@ func Run() (string, error) {
 	close(resultChan)
 
 	localLogger.Info("finished")
+
+	// Shutdown.
+	go func() {
+		<-ctx.Done()
+		if err := ctx.Err(); err != nil {
+			localLogger.Error(fmt.Errorf("shutdown: %w", err))
+		}
+		audioCancel()
+		close(done)
+	}()
+
 	return result, nil
 }
 
@@ -263,7 +264,7 @@ func process(in <-chan audio.Buffer, resultChan chan string, wg *sync.WaitGroup)
 	}
 }
 
-func PrintAvailableDevices() {
+func printAvailableDevices() {
 	devices, err := portaudio.Devices()
 	if err != nil {
 		localLogger.Fatal("portaudio.Devices %s", err)

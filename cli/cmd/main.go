@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // ClientRequest Request from client
@@ -33,6 +34,8 @@ var (
 	debugConsole *tview.TextView
 )
 
+var localLogger *logger.DebugLogger
+
 // if dev is true, then should init on new window, so logging can be seen in terminal
 func init() {
 	flag.BoolVar(&dev, "dev", false, "Development mode")
@@ -40,7 +43,8 @@ func init() {
 }
 
 func main() {
-	localLogger := logger.NewLogger(debugConsole, dev, "main")
+	localLogger = logger.NewLogger(debugConsole, dev, "main")
+
 	app := tview.NewApplication()
 	app.EnablePaste(true)
 
@@ -93,6 +97,8 @@ func main() {
 	}
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		var wg sync.WaitGroup
+
 		switch event.Key() {
 		case tcell.KeyESC:
 			if textView.GetText(false) != "" {
@@ -178,69 +184,27 @@ func main() {
 				//speech.PrintAvailableDevices(debugConsole)
 				// Channel to signal completion of the goroutine
 
+				wg.Add(1)
 				go func() {
+					defer wg.Done() // Ensure Done is called on completion
 					voiceContent, err = speech.Run()
 					if err != nil {
 						localLogger.Error("Failed to process voice")
 					}
 				}()
+				localLogger.Info("Voice to api")
 
-				localLogger.Info("Voice recognizer Completed")
-				content = voiceContent
-				//return event
+				go func() {
+					wg.Wait()
+					sendAndRenderContents(textView, textArea, app, voiceContent)
+					localLogger.Info("Voice recognizer Completed")
+				}()
+
+				textArea.SetDisabled(false)
+				return event
 			}
 
-			go func() {
-				fmt.Fprintln(textView, "[red::]You:[-]")
-				fmt.Fprintf(textView, "%s\n\n", content)
-
-				clientReq := ClientRequest{Model: "llama3", Text: content}
-				localLogger.Info("Input request:", clientReq.Text)
-				requestData, err := json.Marshal(clientReq)
-				if err != nil {
-					localLogger.Error("Failed to serialize request: %s\n\n", err)
-					textArea.SetDisabled(false)
-					return
-				}
-
-				req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
-				if err != nil {
-					localLogger.Error("Failed to create request: %s\n\n", err)
-					textArea.SetDisabled(false)
-					return
-				}
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Accept", "application/x-ndjson")
-
-				client := &http.Client{}
-				resp, err := client.Do(req)
-				if err != nil {
-					localLogger.Error("Failed to send request: %s\n\n", err)
-					textArea.SetDisabled(false)
-					return
-				}
-				defer resp.Body.Close()
-
-				fmt.Fprintf(textView, "[green::]Bot:[-]\n")
-				scanner := bufio.NewScanner(resp.Body)
-				buf := make([]byte, 0, 64*1024) // Create an initial buffer of size 64 KB
-				scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
-
-				for scanner.Scan() {
-					var clientResp ClientResponse
-					err := json.Unmarshal(scanner.Bytes(), &clientResp)
-					if err != nil {
-						localLogger.Error("Failed to decode response: %s\n\n", err)
-						continue
-					}
-					app.QueueUpdateDraw(func() {
-						fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
-					})
-				}
-				if err := scanner.Err(); err != nil {
-					localLogger.Error("Failed to read stream: %s\n\n", err)
-				}
-			}()
+			go sendAndRenderContents(textView, textArea, app, content)
 
 			textArea.SetDisabled(false)
 			return event
@@ -258,5 +222,57 @@ func main() {
 
 	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
+	}
+}
+
+func sendAndRenderContents(textView *tview.TextView, textArea *tview.TextArea, app *tview.Application, content string) {
+	fmt.Fprintln(textView, "[red::]You:[-]")
+	fmt.Fprintf(textView, "%s\n\n", content)
+
+	clientReq := ClientRequest{Model: "llama3", Text: content}
+	localLogger.Info("Input request:", clientReq.Text)
+	requestData, err := json.Marshal(clientReq)
+	if err != nil {
+		localLogger.Error("Failed to serialize request: %s\n\n", err)
+		textArea.SetDisabled(false)
+		return
+	}
+
+	req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
+	if err != nil {
+		localLogger.Error("Failed to create request: %s\n\n", err)
+		textArea.SetDisabled(false)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		localLogger.Error("Failed to send request: %s\n\n", err)
+		textArea.SetDisabled(false)
+		return
+	}
+	defer resp.Body.Close()
+
+	fmt.Fprintf(textView, "[green::]Bot:[-]\n")
+	scanner := bufio.NewScanner(resp.Body)
+	buf := make([]byte, 0, 64*1024) // Create an initial buffer of size 64 KB
+	scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
+
+	for scanner.Scan() {
+		var clientResp ClientResponse
+		err := json.Unmarshal(scanner.Bytes(), &clientResp)
+		if err != nil {
+			localLogger.Error("Failed to decode response: %s\n\n", err)
+			continue
+		}
+		app.QueueUpdateDraw(func() {
+			fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		localLogger.Error("Failed to read stream: %s\n\n", err)
 	}
 }
