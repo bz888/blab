@@ -24,7 +24,7 @@ func NewDebugLogger(debugView *tview.TextView, fileName string) *DebugLogger {
 }
 
 func (d *DebugLogger) log(errorType Types, v ...interface{}) {
-	if d.debugView != nil {
+	if d != nil {
 		var format string
 		switch errorType {
 		case Info:

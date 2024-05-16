@@ -248,6 +248,7 @@ celerybeat.pid
 
 # Environments
 ./cli/.env
+./cli/cmd/.env
 .env
 .venv
 env/

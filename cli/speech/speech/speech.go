@@ -2,6 +2,7 @@ package speech
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/bz888/blab/speech/convert"
 	"github.com/bz888/blab/speech/output_api"
@@ -31,21 +32,25 @@ const (
 	maxSegmentDuration = time.Second * 25
 )
 
-var sileroFilePath string
-var localLogger *logger.DebugLogger
-var _debugConsole *tview.TextView
+var sileroFilePath = "./silero_vad.onnx"
+var localLogger *logger.DebugLogger = nil
+var _debugConsole *tview.TextView = nil
 
 func init() {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		localLogger.Fatal("Failed to determine working directory: %v", err)
 	}
-	sileroFilePath = filepath.Join(workingDir, "silero_vad.onnx")
+	sileroFilePath = filepath.Join(workingDir, "./silero_vad.onnx")
 }
 
 func Run(debugConsole *tview.TextView) (string, error) {
 	_debugConsole = debugConsole
 	localLogger = logger.NewDebugLogger(debugConsole, "speech")
+
+	if debugConsole == nil {
+		return "", errors.New("debugConsole is nil")
+	}
 
 	portaudio.Initialize()
 	defer portaudio.Terminate()
@@ -54,25 +59,25 @@ func Run(debugConsole *tview.TextView) (string, error) {
 	defer stop()
 
 	// If there is no selected device, print all of them and exit.
-	args := os.Args[1:]
-	var selectedDevice *portaudio.DeviceInfo
-	var err error
-
-	if len(args) == 0 {
-		// No device specified, use default input device
-		selectedDevice, err = portaudio.DefaultInputDevice()
-		if err != nil {
-			localLogger.Fatal("failed to get default input device: %s", err)
-		}
-		PrintAvailableDevices()
-		localLogger.Info("Using default input device: %s", selectedDevice.Name)
-	} else {
-		// Select the device based on argument
-		selectedDevice, err = selectInputDevice(args)
-		if err != nil {
-			localLogger.Fatal("select input device %s", err)
-		}
-	}
+	//args := os.Args[1:]
+	var selectedDevice, _ = portaudio.DefaultInputDevice()
+	//var err error
+	//
+	//if len(args) == 0 {
+	//	// No device specified, use default input device
+	//	selectedDevice, err = portaudio.DefaultInputDevice()
+	//	if err != nil {
+	//		localLogger.Fatal("failed to get default input device: %s", err)
+	//	}
+	//	PrintAvailableDevices()
+	//	localLogger.Info("Using default input device: %s", selectedDevice.Name)
+	//} else {
+	//	// Select the device based on argument
+	//	selectedDevice, err = selectInputDevice(args)
+	//	if err != nil {
+	//		localLogger.Fatal("select input device %s", err)
+	//	}
+	//}
 
 	done := make(chan bool)
 	audioCtx, audioCancel := context.WithCancel(ctx)

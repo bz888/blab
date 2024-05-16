@@ -34,7 +34,7 @@ type OutputParser struct {
 	WithConfidence bool
 }
 
-var localLogger *logger.DebugLogger
+var localLogger *logger.DebugLogger = nil
 
 func buildRecogniserRequestGoogle(audioData []byte) *http.Request {
 	err := godotenv.Load()

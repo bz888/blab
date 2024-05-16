@@ -3,10 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	server "github.com/bz888/blab/api"
 	"github.com/bz888/blab/speech/speech"
 	logger "github.com/bz888/blab/utils"
 	"github.com/gdamore/tcell/v2"
@@ -14,9 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 )
 
 type Client struct {
@@ -64,52 +62,27 @@ var (
 	debug bool
 )
 
-const sampleRate = 16000
-const numChannels = 1
-const bitsPerSample = 16
-
-var debugConsole *tview.TextView
-var port = 8080
-var localLogger *logger.DebugLogger
-
 func init() {
 	flag.BoolVar(&debug, "debug", false, "enable debug output")
 	flag.Parse()
-	localLogger = logger.NewDebugLogger(debugConsole, "main")
 }
 
 func main() {
-	// Start the server in a goroutine to allow asynchronous execution
-	go func() {
-		http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-			status := struct {
-				PortWorking   bool `json:"port_working"`
-				ServerWorking bool `json:"server_working"`
-			}{
-				PortWorking:   true,
-				ServerWorking: true,
-			}
-
-			err := json.NewEncoder(w).Encode(status)
-			if err != nil {
-				return
-			}
-		})
-
-		http.HandleFunc("/process_text", processTextHandler)
-
-		address := ":" + strconv.Itoa(port)
-		localLogger.Info("Debug mode is enabled")
-		localLogger.Info("Server started on http://localhost" + address + "/")
-
-		// Start the server
-		err := http.ListenAndServe(address, nil)
-		if err != nil {
-			localLogger.Error("Error starting server: ", err)
-		}
-	}()
-
 	app := tview.NewApplication()
+
+	debugConsole := tview.NewTextView().
+		SetChangedFunc(func() {
+			app.Draw()
+		}).
+		SetDynamicColors(true).
+		SetRegions(true).
+		SetWordWrap(true)
+
+	localLogger := logger.NewDebugLogger(debugConsole, "main")
+
+	go server.Run()
+
+	// Start the server in a goroutine to allow asynchronous execution
 	app.EnablePaste(true)
 
 	textArea := tview.NewTextArea()
@@ -146,25 +119,13 @@ func main() {
 		AddItem(subFlex, 0, 2, false)
 
 	if debug {
-		debugConsole = tview.NewTextView().
-			SetChangedFunc(func() {
-				app.Draw()
-			}).
-			SetDynamicColors(true).
-			SetRegions(true).
-			SetWordWrap(true)
-
-		debugConsole.SetTitle("Debugger").SetBorder(true)
-		debugConsole.ScrollToEnd()
 		mainFlex.
 			AddItem(debugConsole, 0, 1, false)
-
-		localLogger = logger.NewDebugLogger(debugConsole, "main")
+		debugConsole.SetTitle("Debugger").SetBorder(true)
+		debugConsole.ScrollToEnd()
 	}
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		var wg sync.WaitGroup
-
 		switch event.Key() {
 		case tcell.KeyESC:
 			if textView.GetText(false) != "" {
@@ -195,13 +156,20 @@ func main() {
 				return event
 			case "/bye":
 				fmt.Fprintf(textView, "Bye bye\n")
-				localLogger.Info("Exiting by command.")
-				shutdown(app)
+
+				func() {
+					localLogger.Info("Exiting by command.")
+					localLogger.Info("Shutting down gracefully.")
+					app.Stop()
+					os.Exit(0)
+				}()
+
 				return nil
 			case "/debug":
-				// toggling is no working if it is repeated execution
 				go func() {
 					if debugConsole == nil {
+						debug = true
+
 						app.QueueUpdateDraw(func() {
 							debugConsole = tview.NewTextView().
 								SetChangedFunc(func() {
@@ -225,6 +193,8 @@ func main() {
 							debugConsole = nil
 							fmt.Fprintf(textView, "Debug console disabled\n")
 						})
+
+						debug = false
 					}
 				}()
 
@@ -243,20 +213,18 @@ func main() {
 				//speech.PrintAvailableDevices(debugConsole)
 				// Channel to signal completion of the goroutine
 
-				wg.Add(1)
 				go func() {
 					voiceContent, err = speech.Run(debugConsole)
 					if err != nil {
 						localLogger.Error("Failed to process voice")
 					}
-					wg.Done()
 				}()
 
 				localLogger.Info("Voice recognizer Completed")
 				content = voiceContent
+				return event
 			}
 
-			wg.Wait()
 			go func() {
 				fmt.Fprintln(textView, "[red::]You:[-]")
 				fmt.Fprintf(textView, "%s\n\n", content)
@@ -318,113 +286,4 @@ func main() {
 	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
 	}
-}
-
-func processTextHandler(w http.ResponseWriter, r *http.Request) {
-	var clientReq ClientRequest
-	err := json.NewDecoder(r.Body).Decode(&clientReq)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	apiReq := APIRequest{
-		Model: clientReq.Model,
-		Messages: []Message{
-			{
-				Role:    "user",
-				Content: clientReq.Text,
-			},
-		},
-		Stream: true,
-	}
-
-	client := &Client{
-		base: &url.URL{Scheme: "http", Host: "localhost:11434"},
-		http: &http.Client{},
-	}
-
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Transfer-Encoding", "chunked")
-
-	encoder := json.NewEncoder(w)
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
-	err = client.Chat(r.Context(), &apiReq, func(bts []byte) error {
-		var apiResp APIResponse
-		if err := json.Unmarshal(bts, &apiResp); err != nil {
-			return err
-		}
-
-		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
-
-		if !apiResp.Done {
-			localLogger.Info("Received response:", apiResp.Message.Content)
-		} else {
-			localLogger.Info("Completed response", string(bts))
-		}
-
-		if err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	})
-
-	if err != nil {
-		http.Error(w, "Failed to process request: "+err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (c *Client) Chat(ctx context.Context, req *APIRequest, fn func([]byte) error) error {
-	return c.stream(ctx, http.MethodPost, "/api/chat", req, fn)
-}
-
-func (c *Client) stream(ctx context.Context, method string, path string, data any, fn func([]byte) error) error {
-	var buf *bytes.Buffer
-	if data != nil {
-		bts, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
-		buf = bytes.NewBuffer(bts)
-	}
-
-	requestURL := c.base.ResolveReference(&url.URL{Path: path})
-	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
-	if err != nil {
-		return err
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/x-ndjson")
-	response, err := c.http.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-
-	scanner := bufio.NewScanner(response.Body)
-	for scanner.Scan() {
-		if err := fn(scanner.Bytes()); err != nil {
-			return err
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanner error: %w", err)
-	}
-
-	return nil
-}
-
-func shutdown(app *tview.Application) {
-	localLogger.Info("Shutting down gracefully.")
-	app.Stop()
-	os.Exit(0)
 }

@@ -1,17 +1,26 @@
-package api
+package server
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
-	"github.com/rivo/tview"
-	"io"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"strconv"
 )
+
+type Client struct {
+	base *url.URL
+	http *http.Client
+}
 
 // ClientRequest Request from client
 type ClientRequest struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
+	Model string `json:"model"`
 }
 
 // APIRequest Request to external API
@@ -44,86 +53,72 @@ type ClientResponse struct {
 	ProcessedText string `json:"processedText"`
 }
 
-var URL = "http://localhost:11434/"
-
-var debugMode bool // Flag to control debug logging
-var debugConsoleGlob *tview.TextView
-
-func debugLog(v ...interface{}) {
-	if debugMode {
-		//fmt.Fprintf(debugConsoleGlob, "DEBUG: %v\n", v)
-		log.Println(v)
-	}
-}
+var host = "localhost:11434"
+var port = 8080
 
 // Handler function that processes text
 func processTextHandler(w http.ResponseWriter, r *http.Request) {
 	var clientReq ClientRequest
-
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
-	debugLog("Processing request:", clientReq)
-
 	if err != nil {
-		log.Printf("Error decoding client JSON: %s", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
+	defer r.Body.Close()
 
-		}
-	}(r.Body)
-
-	// Prepare the request for the external API
 	apiReq := APIRequest{
-		Model: "llama3", // this should be selectable
+		Model: clientReq.Model,
 		Messages: []Message{
 			{
 				Role:    "user",
 				Content: clientReq.Text,
 			},
 		},
-		Stream: false,
+		Stream: true,
 	}
 
-	requestData, err := json.Marshal(apiReq)
-	debugLog("Sending data to API:", string(requestData))
+	client := &Client{
+		base: &url.URL{Scheme: "http", Host: host},
+		http: &http.Client{},
+	}
+
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	encoder := json.NewEncoder(w)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	err = client.Chat(r.Context(), &apiReq, func(bts []byte) error {
+		var apiResp APIResponse
+		if err := json.Unmarshal(bts, &apiResp); err != nil {
+			return err
+		}
+
+		err := encoder.Encode(ClientResponse{ProcessedText: apiResp.Message.Content})
+
+		//if !apiResp.Done {
+		//	localLogger.Info("Received response:", apiResp.Message.Content)
+		//} else {
+		//	localLogger.Info("Completed response", string(bts))
+		//}
+
+		if err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
 
 	if err != nil {
-		log.Printf("Error marshaling API request JSON: %s", err)
-		http.Error(w, "Error marshaling JSON", http.StatusInternalServerError)
-		return
-	}
-
-	// Send the request to the external API
-	apiURL := "http://localhost:11434/api/chat"
-	apiResp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestData))
-	if err != nil {
-		log.Printf("Error calling external API: %s", err)
-		http.Error(w, "Error calling external API", http.StatusInternalServerError)
-		return
-	}
-	defer apiResp.Body.Close()
-
-	// Read the response from external API
-	var apiResponse APIResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&apiResponse); err != nil {
-		log.Printf("Error decoding API response JSON: %s", err)
-		http.Error(w, "Error decoding API response JSON", http.StatusInternalServerError)
-		return
-	}
-	debugLog("Received response from API:", apiResponse)
-
-	clientResp := ClientResponse{ProcessedText: apiResponse.Message.Content}
-	if err := json.NewEncoder(w).Encode(clientResp); err != nil {
-		log.Printf("Error encoding client response JSON: %s", err)
-		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		http.Error(w, "Failed to process request: "+err.Error(), http.StatusInternalServerError)
 	}
 }
-
-func StartServer(debugMode bool, debugConsole *tview.TextView) {
-	//debugMode = debug // Set the global debug flag based on input
+func Run() {
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		status := struct {
 			PortWorking   bool `json:"port_working"`
@@ -140,10 +135,56 @@ func StartServer(debugMode bool, debugConsole *tview.TextView) {
 	})
 
 	http.HandleFunc("/process_text", processTextHandler)
-	if debugMode {
-		//debugConsoleGlob = debugConsole
-		log.Println("Server starting on http://localhost:8080/")
-		log.Println("Debug mode is enabled")
+
+	address := ":" + strconv.Itoa(port)
+	log.Println("Debug mode is enabled")
+	log.Println("Server started on http://localhost" + address + "/")
+
+	// Start the server
+	err := http.ListenAndServe(address, nil)
+	if err != nil {
+		log.Fatal("Error starting server: ", err)
 	}
-	log.Fatal(http.ListenAndServe(":8080", nil))
+
+}
+
+func (c *Client) Chat(ctx context.Context, req *APIRequest, fn func([]byte) error) error {
+	return c.stream(ctx, http.MethodPost, "/api/chat", req, fn)
+}
+
+func (c *Client) stream(ctx context.Context, method string, path string, data any, fn func([]byte) error) error {
+	var buf *bytes.Buffer
+	if data != nil {
+		bts, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		buf = bytes.NewBuffer(bts)
+	}
+
+	requestURL := c.base.ResolveReference(&url.URL{Path: path})
+	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/x-ndjson")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		if err := fn(scanner.Bytes()); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scanner error: %w", err)
+	}
+
+	return nil
 }
