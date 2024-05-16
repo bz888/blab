@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	server "github.com/bz888/blab/api"
@@ -12,22 +9,10 @@ import (
 	logger "github.com/bz888/blab/utils"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 )
-
-// ClientRequest Request from client
-type ClientRequest struct {
-	Text  string `json:"text"`
-	Model string `json:"model"`
-}
-
-// ClientResponse Response to client
-type ClientResponse struct {
-	ProcessedText string `json:"processedText"`
-}
 
 var (
 	dev          bool
@@ -35,6 +20,7 @@ var (
 )
 
 var localLogger *logger.DebugLogger
+var defaultModel = "llama3:latest" // default
 
 // if dev is true, then should init on new window, so logging can be seen in terminal
 func init() {
@@ -48,6 +34,8 @@ func init() {
 //	}
 func main() {
 	localLogger = logger.NewLogger(debugConsole, dev, "main")
+
+	currentModel := defaultModel
 
 	app := tview.NewApplication()
 	app.EnablePaste(true)
@@ -194,17 +182,84 @@ func main() {
 
 				go func() {
 					wg.Wait()
-					sendAndRenderContents(textView, textArea, app, voiceContent)
+					server.Chatting(textView, textArea, app, currentModel, voiceContent)
 					localLogger.Info("Voice recognizer Completed")
 				}()
 				fmt.Fprintf(textView, "\nVoice Input Enabled\n")
 
 				textArea.SetDisabled(false)
 				return event
+			case "/models":
+				go func() {
+					var modelList []server.Model
+					models, err := server.ListModels()
+					if err != nil {
+					}
+					modelList = models
+
+					createModal := func(p tview.Primitive, width, height int) tview.Primitive {
+						return tview.NewFlex().
+							AddItem(nil, 0, 1, false).
+							AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+								AddItem(nil, 0, 1, false).
+								AddItem(p, height, 1, true).
+								AddItem(nil, 0, 1, false), width, 1, true).
+							AddItem(nil, 0, 1, false)
+					}
+
+					var pages *tview.Pages
+
+					list := tview.NewList()
+					list.SetBorder(true)
+
+					for i, model := range modelList {
+						runeValue := '0' + rune(i)
+
+						if model.Name == currentModel {
+							list.AddItem(model.Name, "Current LLM", runeValue, func() {
+								localLogger.Info("This model is currently in use", model.Name)
+								fmt.Fprintf(textView, "\nAlready using model: %s\n\n", model.Name)
+							})
+						} else {
+							list.AddItem(model.Name, "LLM", runeValue, func() {
+								localLogger.Info("Selected: ", model.Name)
+								currentModel = model.Name
+								fmt.Fprintf(textView, "\nUsing Model: %s\n\n", model.Name)
+
+								pages.RemovePage("modelModal")
+								textArea.SetDisabled(false)
+								app.SetFocus(textArea)
+								return
+							})
+						}
+					}
+
+					modal := createModal(list, 40, 10)
+
+					list.
+						AddItem("Back", "", 'q', func() {
+							pages.RemovePage("modelModal")
+							textArea.SetDisabled(false)
+							app.SetFocus(textArea)
+							return
+						})
+
+					pages = tview.NewPages().
+						AddPage("main", mainFlex, true, true).
+						AddPage("modelModal", modal, true, true)
+
+					if err := app.SetRoot(pages, true).Run(); err != nil {
+						panic(err)
+					}
+				}()
+
+				// todo double check if this is the correct execution, i feel like it can introduce leakage
+				localLogger.Info("/models command executed and completed")
+				return event
 			}
 
 			go func() {
-				sendAndRenderContents(textView, textArea, app, content)
+				server.Chatting(textView, textArea, app, currentModel, content)
 				textArea.SetDisabled(false)
 			}()
 
@@ -219,61 +274,8 @@ func main() {
 	speech.InitService(debugConsole, dev)
 
 	go server.Run()
-	//go app.Run()
 
 	if err := app.SetRoot(mainFlex, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
-	}
-}
-
-func sendAndRenderContents(textView *tview.TextView, textArea *tview.TextArea, app *tview.Application, content string) {
-	fmt.Fprintln(textView, "[red::]You:[-]")
-	fmt.Fprintf(textView, "%s\n\n", content)
-
-	clientReq := ClientRequest{Model: "llama3", Text: content}
-	localLogger.Info("Input request:", clientReq.Text)
-	requestData, err := json.Marshal(clientReq)
-	if err != nil {
-		localLogger.Error("Failed to serialize request: %s\n\n", err)
-		textArea.SetDisabled(false)
-		return
-	}
-
-	req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
-	if err != nil {
-		localLogger.Error("Failed to create request: %s\n\n", err)
-		textArea.SetDisabled(false)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/x-ndjson")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		localLogger.Error("Failed to send request: %s\n\n", err)
-		textArea.SetDisabled(false)
-		return
-	}
-	defer resp.Body.Close()
-
-	fmt.Fprintf(textView, "[green::]Bot:[-]\n")
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024) // Create an initial buffer of size 64 KB
-	scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
-
-	for scanner.Scan() {
-		var clientResp ClientResponse
-		err := json.Unmarshal(scanner.Bytes(), &clientResp)
-		if err != nil {
-			localLogger.Error("Failed to decode response: %s\n\n", err)
-			continue
-		}
-		app.QueueUpdateDraw(func() {
-			fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		localLogger.Error("Failed to read stream: %s\n\n", err)
 	}
 }

@@ -22,6 +22,10 @@ type DebugLogger struct {
 	dev  bool
 }
 
+// TODO improve logging
+// https://github.com/microsoft/onnxruntime/blob/47a178b518cb8929b308959174b16fca2bef2cb5/onnxruntime/core/graph/graph.cc#L4138
+// this is crowding the logs, need to find better ways to process debug logs
+
 func NewLogger(debugView *tview.TextView, dev bool, fileName string) *DebugLogger {
 	return &DebugLogger{view: debugView, file: fileName, dev: dev}
 }
