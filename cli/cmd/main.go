@@ -42,6 +42,10 @@ func init() {
 	flag.Parse()
 }
 
+//	func main() {
+//		speech.InitService(debugConsole, dev)
+//		speech.Run()
+//	}
 func main() {
 	localLogger = logger.NewLogger(debugConsole, dev, "main")
 
@@ -157,14 +161,14 @@ func main() {
 							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
 
 							localLogger = logger.NewLogger(debugConsole, dev, "main")
-							fmt.Fprintf(textView, "Debug console enabled\n")
+							fmt.Fprintf(textView, "\nDebug console enabled\n")
 						})
 					} else {
 						// toggle does not work, as it changes the address ?
 						app.QueueUpdateDraw(func() {
 							mainFlex.RemoveItem(debugConsole)
 
-							fmt.Fprintf(textView, "Debug console disabled\n")
+							fmt.Fprintf(textView, "\nDebug console disabled\n")
 						})
 					}
 				}()
@@ -176,13 +180,6 @@ func main() {
 				localLogger.Info("Voice recogniser Started")
 				var voiceContent string
 				var err error
-				//voiceContent, err := speech.Run()
-				//if err != nil {
-				//	log.Fatal("Failed on voice recogniser", err)
-				//}
-
-				//speech.PrintAvailableDevices(debugConsole)
-				// Channel to signal completion of the goroutine
 
 				wg.Add(1)
 				go func() {
@@ -191,6 +188,7 @@ func main() {
 					if err != nil {
 						localLogger.Error("Failed to process voice")
 					}
+					app.Draw()
 				}()
 				localLogger.Info("Voice to api")
 
@@ -199,14 +197,17 @@ func main() {
 					sendAndRenderContents(textView, textArea, app, voiceContent)
 					localLogger.Info("Voice recognizer Completed")
 				}()
+				fmt.Fprintf(textView, "\nVoice Input Enabled\n")
 
 				textArea.SetDisabled(false)
 				return event
 			}
 
-			go sendAndRenderContents(textView, textArea, app, content)
+			go func() {
+				sendAndRenderContents(textView, textArea, app, content)
+				textArea.SetDisabled(false)
+			}()
 
-			textArea.SetDisabled(false)
 			return event
 		}
 		return event
