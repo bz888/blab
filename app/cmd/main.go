@@ -113,7 +113,9 @@ func main() {
 				fmt.Fprintf(textView, "- /help: Display this help message\n")
 				fmt.Fprintf(textView, "- /bye: Exit the application\n")
 				fmt.Fprintf(textView, "- /debug: Toggle the debug console\n")
-				fmt.Fprintf(textView, "- /voice: Activate voice commands\n\n")
+				fmt.Fprintf(textView, "- /voice: Activate voice input\n\n")
+				fmt.Fprintf(textView, "- /models: Select between local LLM\n\n")
+
 				textArea.SetDisabled(false)
 				return event
 

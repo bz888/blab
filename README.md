@@ -1,63 +1,48 @@
-# Bad Siri
+# Blab
 
-voice command prompt application that converts spoken language into text, processes it through a large language model (LLM), and returns the processed response. This project uses Python for speech recognition and Go for API interactions.
+Blab is a Terminal User Interface (TUI) built with Golang for Large Language Model (LLM) chat. It uses the `ollama` package to run large language models locally.
 
-## Components
+## Features
+- **Chat Conversation Interface**
+- **Voice Recognition on Voice Inputs**
+- **Changing Between Local Models**
 
-### Speech Recognition Module
-This module uses the microphone to capture audio input and converts it into text.
-- **Packages**:
-    - `speech_recognition`: Main library for recognizing speech.
-    - `PyAudio`: Used for microphone input in conjunction with `speech_recognition`.
+## macOs
 
-### API Client Module
-This module sends the processed text to a GCP VM running the LLM and retrieves the response.
-- **Packages**:
-    - `net/http`: Standard library in Go for HTTP client and server implementations.
-    - `encoding/json`: For encoding and decoding JSON, used to format requests and parse responses.
+- **FLAC**: Install FLAC using Homebrew.
+  ```sh
+  brew install flac
+  ```
+- **ONNXRuntime**: Install onnxruntime using Homebrew.
+  ```shell
+  brew install onnxruntime
+  ```
+  ```shell
+  export LIBRARY_PATH=/opt/homebrew/Cellar/onnxruntime/1.17.1/lib
+  ```
+- **Ollama**: Install `ollama` refer to: [ollama docs](https://github.com/ollama/ollama)
 
-### VM with LLM
-Hosts the server that processes the input text using a large language model and returns generated text.
-- **Packages**:
-    - `transformers`: Provides the models and utilities for handling LLMs like tokenization and embedding.
-    - `flask`: To set up an API server that can accept requests and send responses.
-
-### Output
-The response from the LLM is displayed in the terminal.
-- **Technology**: Python
-- **Function**: Uses basic print statements to display the output.
-
-## Workflow Diagram
-
-```plaintext
-+------------+      +-------------+      +------------+      +------------------+      +-----------+      +-------------+
-|            |      |             |      |            |      |                  |      |           |      |             |
-| Input Text | ---> | Tokenization| ---> | Embeddings | ---> |    Attention     | ---> | Decoding  | ---> | Output Text |
-|            |      |             |      |            |      |    Mechanisms    |      |           |      |             |
-+------------+      +-------------+      +------------+      +------------------+      +-----------+      +-------------+
+## Quickstart
+Ensure `ollama` is running.
+create `.env` under `app/cmd` 
+```shell
+API_KEY=GOOGLE_API_KEY
 ```
 
-## Getting Started
+```shell
+git clone https://github.com/bz888/blab.git
+cd app
+```
+```shell
+./blab
+```
 
-### Prerequisites
-- Python 3.8+ installed with `pip` (Full Extent of the SpeechRecognition 3.10.4 library requires python 3.8+)
-- Go 1.x installed
-- Access to Google Cloud Platform for deploying a VM
 
-### Setup and Installation
-1. **Python Environment Setup**
-    - Install the required Python libraries:
-      ```bash
-      pip install speech_recognition pyaudio transformers flask
-      ```
-2. **Go Environment Setup**
-    - Set up the Go workspace and ensure Go is properly installed. [Go Docs](https://go.dev/doc/).
+## Usage
+`-dev`: Enables the log console on startup. (example: `blab -dev`)
 
-3. **VM Setup**
-    - Deploy a GCP VM.
-    - Install Python and required libraries like `transformers` and `flask`.
-
-### Running the Application
-1. Start the speech recognition module in Python.
-2. Run the Go API client to handle the text input and output.
-3. Ensure the LLM server on the GCP VM is operational and can receive requests.
+`/help`: Display this help message.
+`/bye`: Exit the application.
+`/debug`: Toggle the debug console.
+`/voice`: Activate voice input.
+`/models`: Select between local LLMs.
