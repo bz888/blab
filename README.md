@@ -2,11 +2,6 @@
 
 Blab is a Terminal User Interface (TUI) built with Golang for Large Language Model (LLM) chat. It uses the `ollama` package to run large language models locally.
 
-## Features
-- **Chat Conversation Interface**
-- **Voice Recognition on Voice Inputs**
-- **Changing Between Local Models**
-
 ## macOs
 
 - **FLAC**: Install FLAC using Homebrew.
@@ -39,10 +34,12 @@ cd app
 
 
 ## Usage
-`-dev`: Enables the log console on startup. (example: `blab -dev`)
+flags:
+- `-dev`: Enables the log console on startup. (example: `blab -dev`)
 
-`/help`: Display this help message.
-`/bye`: Exit the application.
-`/debug`: Toggle the debug console.
-`/voice`: Activate voice input.
-`/models`: Select between local LLMs.
+In-app:
+- `/help`: Display this help message.
+- `/bye`: Exit the application.
+- `/debug`: Toggle the debug console.
+- `/voice`: Activate voice input.
+- `/models`: Select between local LLMs.
