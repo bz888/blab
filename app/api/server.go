@@ -88,8 +88,8 @@ var port = 8080
 
 var localLogger *logger.DebugLogger
 
-func InitService(debugConsole *tview.TextView, dev bool) {
-	localLogger = logger.NewLogger(debugConsole, dev, "server")
+func InitService(debugConsole *tview.TextView, dev bool, logPath string) {
+	localLogger = logger.NewLogger(debugConsole, dev, "server", logPath)
 }
 
 func newClient(host string) *Client {

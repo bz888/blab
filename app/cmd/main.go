@@ -16,6 +16,7 @@ import (
 
 var (
 	dev          bool
+	logPath      string
 	debugConsole *tview.TextView
 )
 
@@ -25,15 +26,12 @@ var defaultModel = "llama3:latest" // default
 // if dev is true, then should init on new window, so logging can be seen in terminal
 func init() {
 	flag.BoolVar(&dev, "dev", false, "Development mode")
+	flag.StringVar(&logPath, "logPath", "", "Path to save the log file")
 	flag.Parse()
 }
 
-//	func main() {
-//		speech.InitService(debugConsole, dev)
-//		speech.Run()
-//	}
 func main() {
-	localLogger = logger.NewLogger(debugConsole, dev, "main")
+	localLogger = logger.NewLogger(debugConsole, dev, "main", logPath)
 
 	currentModel := defaultModel
 
@@ -84,7 +82,7 @@ func main() {
 		debugConsole.SetTitle("Debugger").SetBorder(true)
 		debugConsole.ScrollToEnd()
 
-		localLogger = logger.NewLogger(debugConsole, dev, "main")
+		localLogger = logger.NewLogger(debugConsole, dev, "main", logPath)
 		mainFlex.AddItem(debugConsole, 0, 1, true)
 	}
 
@@ -124,13 +122,18 @@ func main() {
 			case "/bye":
 				fmt.Fprintf(textView, "Bye bye\n")
 
+				wg.Add(1)
 				go func() {
+					defer wg.Done()
+
 					localLogger.Info("Exiting by command.")
 					localLogger.Info("Shutting down gracefully.")
+					logger.CloseLogManager()
 					app.Stop()
-					os.Exit(0)
 				}()
 
+				wg.Wait()
+				os.Exit(0)
 				return nil
 			case "/debug":
 				go func() {
@@ -150,7 +153,7 @@ func main() {
 
 							mainFlex.AddItem(debugConsole, 0, 1, true) // Adjust size as needed
 
-							localLogger = logger.NewLogger(debugConsole, dev, "main")
+							localLogger = logger.NewLogger(debugConsole, dev, "main", logPath)
 							fmt.Fprintf(textView, "\nDebug console enabled\n")
 						})
 					} else {
@@ -271,9 +274,9 @@ func main() {
 	})
 
 	// init services
-	server.InitService(debugConsole, dev)
-	output_api.InitService(debugConsole, dev)
-	speech.InitService(debugConsole, dev)
+	server.InitService(debugConsole, dev, logPath)
+	output_api.InitService(debugConsole, dev, logPath)
+	speech.InitService(debugConsole, dev, logPath)
 
 	go server.Run()
 

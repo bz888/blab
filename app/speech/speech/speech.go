@@ -35,8 +35,8 @@ var sileroFilePath = "./silero_vad.onnx"
 
 var localLogger *logger.DebugLogger
 
-func InitService(debugConsole *tview.TextView, dev bool) {
-	localLogger = logger.NewLogger(debugConsole, dev, "speech")
+func InitService(debugConsole *tview.TextView, dev bool, logPath string) {
+	localLogger = logger.NewLogger(debugConsole, dev, "speech", logPath)
 }
 
 func init() {
@@ -137,6 +137,7 @@ func Run() (string, error) {
 
 					// Resample also copies the buffer to another slice. Potentially, using a channel instead of a
 					// buffer can achieve better performance.
+					localLogger.Info("Sending to processChannel...", len(buffer))
 					processChan <- sound.ResampleInt16(buffer, int(selectedDevice.DefaultSampleRate), 16000)
 					buffer = buffer[:0]
 				}
@@ -151,7 +152,10 @@ func Run() (string, error) {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go process(outChan, resultChan, &wg)
+
+	go func() {
+		process(outChan, resultChan, &wg)
+	}()
 
 	var result string
 	go func() {
@@ -190,7 +194,7 @@ func vad(silero *vadlib.SileroDetector, input <-chan []int16, output chan audio.
 		start := time.Now()
 		detected, err := silero.DetectVoice(soundIntBuffer)
 		if err != nil {
-			localLogger.Info(fmt.Errorf("detect voice: %w", err))
+			localLogger.Error(fmt.Errorf("detect voice: %w", err))
 			continue
 		}
 		localLogger.Info("voice detecting result", time.Since(start), detected)

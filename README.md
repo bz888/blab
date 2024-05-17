@@ -36,6 +36,7 @@ cd app
 ## Usage
 flags:
 - `-dev`: Enables the log console on startup. (example: `blab -dev`)
+- `-logPath=<path>`: Directory path for logFile output. (example: `blab -logPath="./"`)
 
 In-app:
 - `/help`: Display this help message.

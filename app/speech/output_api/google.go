@@ -36,8 +36,8 @@ type OutputParser struct {
 
 var localLogger *logger.DebugLogger
 
-func InitService(debugConsole *tview.TextView, dev bool) {
-	localLogger = logger.NewLogger(debugConsole, dev, "google")
+func InitService(debugConsole *tview.TextView, dev bool, logPath string) {
+	localLogger = logger.NewLogger(debugConsole, dev, "google", logPath)
 }
 
 func buildRecogniserRequestGoogle(audioData []byte) *http.Request {
