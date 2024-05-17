@@ -45,7 +45,6 @@ func buildRecogniserRequestGoogle(audioData []byte) *http.Request {
 	if err != nil {
 		localLogger.Fatal("Error loadin .env file: %v", err)
 	}
-
 	key := os.Getenv("API_KEY")
 	apiURL := "http://www.google.com/speech-api/v2/recognize"
 	data := url.Values{}

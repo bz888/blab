@@ -38,6 +38,11 @@ func ListModels() ([]Model, error) {
 
 // Chatting TODO, refactor, separate the request and the TUI display
 func Chatting(textView *tview.TextView, textArea *tview.TextArea, app *tview.Application, model string, content string) {
+	if content == "" {
+		localLogger.Warn("No content parsed")
+		return
+	}
+
 	fmt.Fprintln(textView, "[red::]You:[-]")
 	fmt.Fprintf(textView, "%s\n\n", content)
 

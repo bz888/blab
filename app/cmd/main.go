@@ -169,7 +169,15 @@ func main() {
 				defer textArea.SetDisabled(false)
 				return event
 			case "/voice":
-				// ping google speech api v2
+				if os.Getenv("API_KEY") == "" {
+					fmt.Fprintf(textView, "\nAPI_KEY is required to enable voice recognistion\n")
+					localLogger.Warn("API_KEY is not set, voice recognition is disabled")
+					textArea.SetDisabled(false)
+					return event
+				}
+
+				fmt.Fprintf(textView, "\nVoice Input Enabled\n")
+
 				localLogger.Info("Voice recogniser Started")
 				var voiceContent string
 				var err error
@@ -190,7 +198,6 @@ func main() {
 					server.Chatting(textView, textArea, app, currentModel, voiceContent)
 					localLogger.Info("Voice recognizer Completed")
 				}()
-				fmt.Fprintf(textView, "\nVoice Input Enabled\n")
 
 				textArea.SetDisabled(false)
 				return event

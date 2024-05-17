@@ -9,6 +9,7 @@ import (
 	vadlib "github.com/bz888/blab/speech/vad"
 	logger "github.com/bz888/blab/utils"
 	"github.com/go-audio/wav"
+	"github.com/joho/godotenv"
 	"github.com/orcaman/writerseeker"
 	"github.com/rivo/tview"
 	"io"
@@ -35,11 +36,19 @@ var sileroFilePath = "./silero_vad.onnx"
 
 var localLogger *logger.DebugLogger
 
+var disable = false
+
 func InitService(debugConsole *tview.TextView, dev bool, logPath string) {
 	localLogger = logger.NewLogger(debugConsole, dev, "speech", logPath)
 }
 
 func init() {
+	godotenv.Load()
+	key := os.Getenv("API_KEY")
+	if key == "" {
+		disable = true
+	}
+
 	workingDir, err := os.Getwd()
 	if err != nil {
 		localLogger.Fatal("Failed to determine working directory: %v", err)
@@ -48,6 +57,11 @@ func init() {
 }
 
 func Run() (string, error) {
+	if disable {
+		//localLogger.Warn("API_KEY is not set, voice recognition is disabled")
+		return "", nil
+	}
+
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 

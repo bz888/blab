@@ -15,7 +15,7 @@ type Types int
 const (
 	Info Types = iota
 	Error
-	Warning
+	Warn
 	Fatal
 )
 
@@ -97,12 +97,20 @@ func NewLogger(debugView *tview.TextView, dev bool, tag string, logPath string) 
 		initLogManager(logPath)
 	}
 
+	var logFile *os.File
+	var logChan chan Message
+
+	if logManager != nil {
+		logFile = logManager.file
+		logChan = logManager.logChan
+	}
+
 	logger := &DebugLogger{
 		view:      debugView,
 		tag:       tag,
 		dev:       dev,
-		logFile:   logManager.file,
-		logChan:   logManager.logChan,
+		logFile:   logFile,
+		logChan:   logChan,
 		closeChan: make(chan struct{}),
 	}
 
@@ -119,7 +127,7 @@ func (d *DebugLogger) log(logTypes Types, v ...interface{}) {
 				format = "[green]DEBUG (%s): %s[-]\n"
 			case Error:
 				format = "[red]DEBUG (%s): %s[-]\n"
-			case Warning:
+			case Warn:
 				format = "[yellow]DEBUG (%s): %s[-]\n"
 			case Fatal:
 				format = "[red]DEBUG (%s): %s[-]\n"
@@ -155,8 +163,8 @@ func (d *DebugLogger) Error(v ...interface{}) {
 	d.log(Error, v...)
 }
 
-func (d *DebugLogger) Warning(v ...interface{}) {
-	d.log(Warning, v...)
+func (d *DebugLogger) Warn(v ...interface{}) {
+	d.log(Warn, v...)
 }
 func (d *DebugLogger) Fatal(v ...interface{}) {
 	d.log(Fatal, v...)
@@ -180,8 +188,8 @@ func (t Types) toString() string {
 		return "INFO"
 	case Error:
 		return "ERROR"
-	case Warning:
-		return "WARNING"
+	case Warn:
+		return "WARN"
 	case Fatal:
 		return "FATAL"
 	default:
