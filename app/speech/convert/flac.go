@@ -2,83 +2,128 @@ package convert
 
 import (
 	"bytes"
-	"crypto/md5"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/mewkiz/flac"
 	"github.com/mewkiz/flac/frame"
 	"github.com/mewkiz/flac/meta"
+	"github.com/orcaman/writerseeker"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 )
 
-func EncodeFLAC(wavData []byte, sampleRate, sampleWidth int) ([]byte, error) {
-	buf := new(bytes.Buffer)
+const (
+	blockSize = 4096 // Block size in samples
+)
 
-	md5Sum := md5.Sum(wavData)
+func EncodeFLAC(wavData []byte) ([]byte, error) {
+	file := &writerseeker.WriterSeeker{}
+
+	// Parse WAV header
+	wavReader := bytes.NewReader(wavData)
+	var header [44]byte
+	if _, err := io.ReadFull(wavReader, header[:]); err != nil {
+		return nil, fmt.Errorf("failed to read WAV header: %w", err)
+	}
+
+	// Extract format information from WAV header
+	audioFormat := binary.LittleEndian.Uint16(header[20:22])
+	if audioFormat != 1 {
+		return nil, fmt.Errorf("unsupported WAV format: %d", audioFormat)
+	}
+	numChannels := binary.LittleEndian.Uint16(header[22:24])
+	sampleRate := binary.LittleEndian.Uint32(header[24:28])
+	bitsPerSample := binary.LittleEndian.Uint16(header[34:36])
+
+	// Set up FLAC metadata
 	streamInfo := &meta.StreamInfo{
-		BlockSizeMin:  16,
-		BlockSizeMax:  4096, // Typical block size for FLAC
-		FrameSizeMin:  0,
-		FrameSizeMax:  0,
-		SampleRate:    uint32(sampleRate),
-		NChannels:     1,
-		BitsPerSample: uint8(sampleWidth * 8),
-		NSamples:      uint64(len(wavData) / sampleWidth),
-		MD5sum:        md5Sum,
+		NChannels:     uint8(numChannels),
+		BitsPerSample: uint8(bitsPerSample),
+		SampleRate:    sampleRate,
 	}
 
-	enc, err := flac.NewEncoder(buf, streamInfo)
+	// Write FLAC metadata
+	encoder, err := flac.NewEncoder(file, streamInfo)
 	if err != nil {
-		return nil, fmt.Errorf("creating FLAC encoder: %w", err)
+		return nil, fmt.Errorf("failed to create FLAC encoder: %w", err)
 	}
-	defer enc.Close()
+	defer encoder.Close()
 
-	frameData := make([]int32, len(wavData)/sampleWidth)
-	for i := 0; i < len(wavData); i += sampleWidth {
-		switch sampleWidth {
-		case 1:
-			frameData[i/sampleWidth] = int32(wavData[i])
-		case 2:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint16(wavData[i:]))
-		case 3:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint32(wavData[i:]) & 0xFFFFFF)
-		case 4:
-			frameData[i/sampleWidth] = int32(binary.LittleEndian.Uint32(wavData[i:]))
-		}
-	}
+	// Calculate block align
+	blockAlign := int(numChannels) * int(bitsPerSample) / 8
 
-	blockSize := 4096 // A typical block size for FLAC
-	for i := 0; i < len(frameData); i += blockSize {
-		end := i + blockSize
-		if end > len(frameData) {
-			end = len(frameData)
+	// Create a buffer to hold the sample data for each block
+	sampleData := make([]byte, blockSize*blockAlign)
+	frameNumber := uint64(0)
+
+	for {
+		// Read the correct number of samples for the block
+		n, err := io.ReadFull(wavReader, sampleData)
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				// Handle the case where the last block may be smaller than the block size
+				sampleData = sampleData[:n]
+			} else {
+				return nil, fmt.Errorf("failed to read WAV samples: %w", err)
+			}
 		}
+
+		if n == 0 {
+			break
+		}
+
+		// Create a frame header
+		frameHeader := frame.Header{
+			HasFixedBlockSize: true,
+			BlockSize:         uint16(len(sampleData) / blockAlign),
+			SampleRate:        sampleRate,
+			Channels:          frame.Channels(numChannels - 1),
+			BitsPerSample:     uint8(bitsPerSample),
+			Num:               frameNumber,
+		}
+
+		// Encode the sample data into FLAC frames
 		flacFrame := &frame.Frame{
-			Header: frame.Header{
-				SampleRate:    uint32(sampleRate),
-				Channels:      1,
-				BitsPerSample: uint8(sampleWidth * 8),
-				BlockSize:     uint16(end - i),
-			},
-			Subframes: []*frame.Subframe{
-				{
-					Samples: frameData[i:end],
-				},
-			},
+			Header:    frameHeader,
+			Subframes: make([]*frame.Subframe, numChannels),
 		}
 
-		//log.Printf("Writing FLAC frame with %d samples\n", len(frameData[i:end]))
-
-		if err := enc.WriteFrame(flacFrame); err != nil {
-			return nil, fmt.Errorf("writing FLAC frame: %w", err)
+		// For each channel, create a subframe
+		for ch := 0; ch < int(numChannels); ch++ {
+			samples := make([]int32, len(sampleData)/blockAlign)
+			for i := 0; i < len(sampleData)/blockAlign; i++ {
+				offset := i*blockAlign + ch*int(bitsPerSample/8)
+				samples[i] = int32(binary.LittleEndian.Uint16(sampleData[offset:]))
+			}
+			flacFrame.Subframes[ch] = &frame.Subframe{
+				Samples: samples,
+			}
 		}
+
+		// Write frame to FLAC encoder
+		if err := encoder.WriteFrame(flacFrame); err != nil {
+			return nil, fmt.Errorf("failed to write FLAC frame: %w", err)
+		}
+
+		frameNumber++
 	}
 
-	return buf.Bytes(), nil
+	// Seek back to the beginning of the emulated file
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to seek in emulated file: %w", err)
+	}
+
+	// Read the entire FLAC data from the emulated file
+	flacData, err := io.ReadAll(file.Reader())
+	if err != nil {
+		return nil, fmt.Errorf("failed to read FLAC data: %w", err)
+	}
+
+	return flacData, nil
 }
 
 func getExecutableFLAC() (string, error) {
@@ -139,7 +184,6 @@ func EncodeFLACExecutable(wavData []byte, sampleWidth, convertWidth int) ([]byte
 		return nil, fmt.Errorf("failed to get FLAC converter: %w", err)
 	}
 
-	// Set up the command
 	cmd := exec.Command(flacConverter, "--stdout", "--totally-silent", "--best", "-")
 	cmd.Stdin = bytes.NewReader(wavData)
 	var out bytes.Buffer

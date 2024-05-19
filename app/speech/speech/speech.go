@@ -256,8 +256,10 @@ func process(in <-chan audio.Buffer, resultChan chan string, wg *sync.WaitGroup)
 		}
 
 		localLogger.Info("Encode to FLAC beginning")
-		//flacData, err := convert.EncodeFLAC(wavData, 16000, 2)
+		//flacData, err := convert.EncodeFLAC(wavData)
 		flacData, err := convert.EncodeFLACExecutable(wavData, 16000, 2)
+		localLogger.Info("FLAC data length: %d bytes\n", len(flacData))
+
 		if err != nil {
 			localLogger.Error(fmt.Errorf("FLAC encoding error: %w", err))
 			return
