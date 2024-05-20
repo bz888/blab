@@ -20,6 +20,7 @@ const (
 	blockSize = 4096 // Block size in samples
 )
 
+// EncodeFLAC Todo, I am not too such how to get this working without using executables
 func EncodeFLAC(wavData []byte) ([]byte, error) {
 	file := &writerseeker.WriterSeeker{}
 
@@ -131,16 +132,24 @@ func getExecutableFLAC() (string, error) {
 	flacConverter, err := exec.LookPath("flac")
 	if err != nil {
 		// 'flac' utility is not installed, check for bundled binaries
-		basePath, err := filepath.Abs(filepath.Dir(os.Args[0]))
+		basePath, err := filepath.Abs(filepath.Join("..", "files"))
 		if err != nil {
 			return "", err
 		}
-		system, machine := runtime.GOOS, runtime.GOARCH
+		system, arch := runtime.GOOS, runtime.GOARCH
 		// todo add support for windows
-		if system == "darwin" && (machine == "amd64" || machine == "arm64") {
-			flacConverter = filepath.Join(basePath, "flac-mac")
-		} else {
-			return "", errors.New("FLAC conversion utility not available - consider installing the FLAC command line application")
+		switch {
+		case system == "windows" && (arch == "386" || arch == "amd64"):
+			flacConverter = filepath.Join(basePath, "flac-win32.exe")
+		case system == "darwin" && (arch == "386" || arch == "amd64" || arch == "arm64"):
+			flacConverter = filepath.Join(basePath, "flac-macos")
+		case system == "linux" && (arch == "386"):
+			//flacConverter = filepath.Join(basePath, "flac-linux-x86")
+			return "", errors.New("go does not support this arch yet, try installing flac for global access")
+		case system == "linux" && (arch == "amd64" || arch == "x86_64"):
+			flacConverter = filepath.Join(basePath, "flac-linux-x86_64")
+		default:
+			return "", errors.New("go does not support this arch")
 		}
 
 		// Ensure the FLAC converter is executable
