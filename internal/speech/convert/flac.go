@@ -128,10 +128,8 @@ func EncodeFLAC(wavData []byte) ([]byte, error) {
 }
 
 func getExecutableFLAC() (string, error) {
-	// Check if the 'flac' utility is installed
 	flacConverter, err := exec.LookPath("flac")
 	if err != nil {
-		// 'flac' utility is not installed, check for bundled binaries
 		basePath, err := filepath.Abs(filepath.Join("..", "files"))
 		if err != nil {
 			return "", err
@@ -144,6 +142,7 @@ func getExecutableFLAC() (string, error) {
 		case system == "darwin" && (arch == "386" || arch == "amd64" || arch == "arm64"):
 			flacConverter = filepath.Join(basePath, "flac-macos")
 		case system == "linux" && (arch == "386"):
+			// TODO needs support on linux x86
 			//flacConverter = filepath.Join(basePath, "flac-linux-x86")
 			return "", errors.New("go does not support this arch yet, try installing flac for global access")
 		case system == "linux" && (arch == "amd64" || arch == "x86_64"):
@@ -187,7 +186,6 @@ func EncodeFLACExecutable(wavData []byte, sampleWidth, convertWidth int) ([]byte
 		convertWidth = 3 // Limit the sample width to 24-bit if the original is 32-bit
 	}
 
-	// Get FLAC converter path
 	flacConverter, err := getExecutableFLAC()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get FLAC converter: %w", err)
@@ -198,12 +196,9 @@ func EncodeFLACExecutable(wavData []byte, sampleWidth, convertWidth int) ([]byte
 	var out bytes.Buffer
 	cmd.Stdout = &out
 
-	// Run the command
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to run FLAC converter: %w", err)
 	}
-
-	// todo support windows
 
 	return out.Bytes(), nil
 }

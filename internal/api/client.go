@@ -4,8 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/bz888/blab/internal/api/server"
+	serverClient "github.com/bz888/blab/internal/api/server/client"
 	"github.com/bz888/blab/internal/logger"
 	"github.com/rivo/tview"
 	"net/http"
@@ -19,28 +20,28 @@ func Init() {
 	localLogger = logger.NewLogger("api client")
 }
 
-func ListModels() ([]server.Model, error) {
+func ListModels() ([]string, error) {
 	req, err := http.NewRequest("GET", "http://localhost:8080/models", nil)
 	if err != nil {
-		localLogger.Error("Failed get models request: %s\n\n", err)
+		localLogger.Error("Failed to create get models request: %s\n", err)
 		return nil, err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		localLogger.Error("Failed to perform models request: %s\n\n", err)
+		localLogger.Error("Failed to perform models request: %s\n", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		localLogger.Error("Failed to get models: %s\n\n", resp.Status)
-		return nil, err
+		localLogger.Error("Failed to get models: %s\n", resp.Status)
+		return nil, errors.New(resp.Status)
 	}
 
-	var models []server.Model
+	var models []string
 	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
-		localLogger.Error("Failed to decode models response: %s\n\n", err)
+		localLogger.Error("Failed to decode models response: %s\n", err)
 		return nil, err
 	}
 	return models, nil
@@ -56,15 +57,19 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 	fmt.Fprintln(textView, "\n\n[red::]You:[-]")
 	fmt.Fprintf(textView, "%s\n\n", content)
 
-	clientReq := server.ClientRequest{Model: model, Text: content}
+	clientReq := serverClient.ChatRequest{Model: model, Text: content}
+
 	localLogger.Info("Input request:", clientReq.Text)
+	localLogger.Info("Input model:", clientReq.Model)
+
 	requestData, err := json.Marshal(clientReq)
 	if err != nil {
 		localLogger.Error("Failed to serialize request: %s\n\n", err)
 		return
 	}
 
-	req, err := http.NewRequest("POST", "http://localhost:8080/process_text", bytes.NewBuffer(requestData))
+	req, err := http.NewRequest("POST", "http://localhost:8080/chat", bytes.NewBuffer(requestData))
+
 	if err != nil {
 		localLogger.Error("Failed to create request: %s\n\n", err)
 		return
@@ -86,7 +91,8 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 	scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
 
 	for scanner.Scan() {
-		var clientResp server.ClientResponse
+		var clientResp serverClient.ChatResponse
+
 		err := json.Unmarshal(scanner.Bytes(), &clientResp)
 		if err != nil {
 			localLogger.Error("Failed to decode response: %s\n\n", err)

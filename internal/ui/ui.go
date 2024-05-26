@@ -1,12 +1,9 @@
 package ui
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/bz888/blab/internal/api"
-	"github.com/bz888/blab/internal/api/server"
 	"github.com/bz888/blab/internal/config"
 	"github.com/bz888/blab/internal/logger"
 	"github.com/bz888/blab/internal/speech"
@@ -78,7 +75,7 @@ func initDebugConsole() *tview.TextView {
 
 // Run InitUi logPath and dev should be set to a ()
 func Run() {
-	currentModel := defaultModel
+	currentModel := &defaultModel
 	localLogger = logger.NewLogger("views")
 
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -108,7 +105,7 @@ func Run() {
 	}
 }
 
-func setInputCapture(mainFlex *tview.Flex, currentModel string) {
+func setInputCapture(mainFlex *tview.Flex, currentModel *string) {
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 
 		switch event.Key() {
@@ -139,7 +136,7 @@ func setInputCapture(mainFlex *tview.Flex, currentModel string) {
 				textArea.SetDisabled(false)
 				return event
 			case "/voice":
-				voiceRecognition(currentModel)
+				voiceRecognition(*currentModel)
 				return event
 			case "/models":
 				go func() {
@@ -147,10 +144,12 @@ func setInputCapture(mainFlex *tview.Flex, currentModel string) {
 					textArea.SetDisabled(false)
 				}()
 				return event
+			case "/historical":
+				return event
 			}
 
 			go func() {
-				api.Chatting(currentModel, content, app, textView)
+				api.Chatting(*currentModel, content, app, textView)
 				textArea.SetDisabled(false)
 			}()
 		}
@@ -160,9 +159,9 @@ func setInputCapture(mainFlex *tview.Flex, currentModel string) {
 
 func voiceRecognition(currentModel string) {
 
-	if os.Getenv("API_KEY") == "" {
-		fmt.Fprintf(textView, "\nAPI_KEY is required to enable voice recognistion\n")
-		localLogger.Warn("API_KEY is not set, voice recognition is disabled")
+	if os.Getenv("GOOGLE_API_KEY") == "" {
+		fmt.Fprintf(textView, "\nGOOGLE_API_KEY is required to enable voice recognistion\n")
+		localLogger.Warn("GOOGLE_API_KEY is not set, voice recognition is disabled")
 		textArea.SetDisabled(false)
 		return
 	}
@@ -172,7 +171,7 @@ func voiceRecognition(currentModel string) {
 	var err error
 	wg.Add(1)
 	go func() {
-		defer wg.Done() // Ensure Done is called on completion
+		defer wg.Done()
 		voiceContent, err = speech.Run()
 		if err != nil {
 			localLogger.Error("Failed to process voice")
@@ -200,7 +199,7 @@ func createModal(p tview.Primitive, width, height int) tview.Primitive {
 		AddItem(nil, 0, 1, false)
 }
 
-func createModelModal(currentModel string, mainFlex *tview.Flex) {
+func createModelModal(currentModel *string, mainFlex *tview.Flex) {
 	models, err := api.ListModels()
 	if err != nil {
 	}
@@ -211,16 +210,16 @@ func createModelModal(currentModel string, mainFlex *tview.Flex) {
 	for i, model := range models {
 		runeValue := '0' + rune(i)
 
-		if model.Name == currentModel {
-			list.AddItem(model.Name, "Current LLM", runeValue, func() {
-				localLogger.Info("This model is currently in use", model.Name)
-				fmt.Fprintf(textView, "\nAlready using model: %s\n\n", model.Name)
+		if model == *currentModel {
+			list.AddItem(model, "Current LLM", runeValue, func() {
+				localLogger.Info("This model is currently in use", model)
+				fmt.Fprintf(textView, "\nAlready using model: %s\n\n", model)
 			})
 		} else {
-			list.AddItem(model.Name, "LLM", runeValue, func() {
-				localLogger.Info("Selected: ", model.Name)
-				currentModel = model.Name
-				fmt.Fprintf(textView, "\nUsing Model: %s\n\n", model.Name)
+			list.AddItem(model, "LLM", runeValue, func() {
+				localLogger.Info("Selected: ", model)
+				*currentModel = model
+				fmt.Fprintf(textView, "\nUsing Model: %s\n\n", model)
 
 				pages.RemovePage("modelModal")
 				textArea.SetDisabled(false)
@@ -299,21 +298,4 @@ func GetDebugConsole() (*tview.TextView, error) {
 		return nil, errors.New("debug console not initialized")
 	}
 	return debugConsole, nil
-}
-
-func streamChat(scanner *bufio.Scanner) {
-	for scanner.Scan() {
-		var clientResp server.ClientResponse
-		err := json.Unmarshal(scanner.Bytes(), &clientResp)
-		if err != nil {
-			localLogger.Error("Failed to decode response: %s\n\n", err)
-			continue
-		}
-		app.QueueUpdateDraw(func() {
-			fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		localLogger.Error("Failed to read stream: %s\n\n", err)
-	}
 }
