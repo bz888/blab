@@ -1,11 +1,11 @@
 package server
 
 import (
+	"github.com/bz888/blab/internal/api/server/handlers"
 	"net/http"
 )
 
-func registerRoutes() {
-	http.HandleFunc("/status", statusHandler)
-	http.HandleFunc("/process_text", processTextHandler)
-	http.HandleFunc("/models", modelHandler)
+func registerRoutes(handler *handlers.Handler) {
+	http.HandleFunc("/chat", handler.ProcessTextHandler)
+	http.HandleFunc("/models", handler.ModelHandler)
 }

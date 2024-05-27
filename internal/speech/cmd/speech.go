@@ -35,7 +35,7 @@ func Run() (string, error) {
 	localLogger = speechConfig.LocalLogger
 
 	if speechConfig.Disable {
-		localLogger.Warn("API_KEY is not set, voice recognition is disabled")
+		localLogger.Warn("GOOGLE_API_KEY is not set, voice recognition is disabled")
 		return "", nil
 	}
 

@@ -16,7 +16,7 @@ var (
 func Init() {
 	LocalLogger = logger.NewLogger("speech")
 	godotenv.Load()
-	key := os.Getenv("API_KEY")
+	key := os.Getenv("GOOGLE_API_KEY")
 	if key == "" {
 		Disable = true
 	}
