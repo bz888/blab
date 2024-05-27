@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"github.com/bz888/blab/internal/api/server/client"
+	"log"
 	"net/http"
 	"sync"
 )
@@ -12,7 +13,7 @@ type Handler struct {
 	ollamaClient client.OllamaClientInterface
 }
 
-func NewHandler(openAIClient client.OpenAIClientInterface, ollamaClient client.OllamaClientInterface, modelClientMap map[string]string) *Handler {
+func NewHandler(openAIClient client.OpenAIClientInterface, ollamaClient client.OllamaClientInterface) *Handler {
 	return &Handler{
 		openAIClient: openAIClient,
 		ollamaClient: ollamaClient,
@@ -51,6 +52,7 @@ func (h *Handler) ModelHandler(w http.ResponseWriter, r *http.Request) {
 	errChan := make(chan error, 2)
 
 	if h.ollamaClient != nil {
+		log.Println("ollama client is enabled", h.ollamaClient != nil)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -60,6 +62,7 @@ func (h *Handler) ModelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.openAIClient != nil {
+		log.Println("openai client is enabled", h.ollamaClient != nil)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

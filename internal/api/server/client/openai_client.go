@@ -31,7 +31,7 @@ var openAIConfig = ClientConfig{
 }
 
 // NewOpenAIClient creates a new OpenAI API client
-func NewOpenAIClient() *OpenAIClient {
+func NewOpenAIClient() OpenAIClientInterface {
 	return &OpenAIClient{
 		Client: *NewClient(openAIConfig),
 	}

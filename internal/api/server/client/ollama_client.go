@@ -31,7 +31,7 @@ var ollamaConfig = ClientConfig{
 }
 
 // NewOllamaClient creates a new Ollama API client
-func NewOllamaClient() *OllamaClient {
+func NewOllamaClient() OllamaClientInterface {
 	return &OllamaClient{
 		Client: *NewClient(ollamaConfig),
 	}

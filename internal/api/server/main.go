@@ -1,8 +1,6 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"github.com/bz888/blab/internal/api/server/client"
 	"github.com/bz888/blab/internal/api/server/handlers"
@@ -43,33 +41,44 @@ func Run() {
 }
 
 func initializeClients() (*handlers.Handler, error) {
-	var openAIClient *client.OpenAIClient
-	var ollamaClient *client.OllamaClient
+	var openAIClient client.OpenAIClientInterface
+	var ollamaClient client.OllamaClientInterface
 
 	openAIAvailable := checkOpenAIAvailability()
 	ollamaAvailable := checkOllamaAvailability()
 
 	if openAIAvailable {
-		openAIClient = client.NewOpenAIClient()
-		openAIClient.GetModels()
-
-		LocalLogger.Info("OpenAI client initialized.")
+		c := client.NewOpenAIClient()
+		_, err := c.GetModels()
+		if err != nil {
+			log.Println("Error initializing OpenAI client:", err)
+		} else {
+			openAIClient = c
+			LocalLogger.Info("OpenAI client initialized.")
+		}
+	} else {
+		openAIClient = nil
 	}
 
 	if ollamaAvailable {
-		ollamaClient = client.NewOllamaClient()
-		ollamaClient.GetModels()
-
-		LocalLogger.Info("Ollama client initialized.")
+		c := client.NewOllamaClient()
+		_, err := c.GetModels()
+		if err != nil {
+			log.Println("Error initializing Ollama client:", err)
+		} else {
+			ollamaClient = c
+			LocalLogger.Info("Ollama client initialized.")
+		}
+	} else {
+		ollamaClient = nil
 	}
-
 	LocalLogger.Info("Cached models", client.CacheModels)
 
 	if !openAIAvailable && !ollamaAvailable {
 		return nil, errors.New("no clients available")
 	}
 
-	return handlers.NewHandler(openAIClient, ollamaClient, modelClientMap), nil
+	return handlers.NewHandler(openAIClient, ollamaClient), nil
 }
 
 func checkOllamaAvailability() bool {
@@ -91,19 +100,13 @@ func checkOpenAIAvailability() bool {
 	}
 
 	// Check /v1/models endpoint
-	//if !checkEndpoint(openAIKey, "https://api.openai.com/v1/models") {
-	//	return false
-	//}
-
-	//// Check /v1/chat/completions endpoint
-	//if !checkChatCompletionsEndpoint(openAIKey) {
-	//	return false
-	//}
+	if !checkEndpoint(openAIKey, "https://api.openai.com/v1/models") {
+		return false
+	}
 
 	return true
 }
 
-// todo refactor these to be tests
 func checkEndpoint(apiKey, url string) bool {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -117,40 +120,6 @@ func checkEndpoint(apiKey, url string) bool {
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		LocalLogger.Error("Failed to access endpoint:", url, "Status:", resp.Status)
-		return false
-	}
-	defer resp.Body.Close()
-	return true
-}
-
-func checkChatCompletionsEndpoint(apiKey string) bool {
-	testChatCompletion := map[string]interface{}{
-		"model": "gpt-3.5-turbo",
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "Hello!",
-			},
-		},
-	}
-	reqBody, err := json.Marshal(testChatCompletion)
-	if err != nil {
-		LocalLogger.Error("Failed to create request body for OpenAI chat completion check:", err)
-		return false
-	}
-
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		LocalLogger.Error("Failed to create request:", err)
-		return false
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		LocalLogger.Error("Failed to access endpoint: https://api.openai.com/v1/chat/completions", "Status:", resp.Status)
 		return false
 	}
 	defer resp.Body.Close()
