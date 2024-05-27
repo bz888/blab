@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"github.com/bz888/blab/internal/api/server/client"
-	"log"
+	"github.com/bz888/blab/internal/logger"
 	"net/http"
 	"sync"
 )
@@ -21,6 +21,7 @@ func NewHandler(openAIClient client.OpenAIClientInterface, ollamaClient client.O
 }
 
 func (h *Handler) ProcessTextHandler(w http.ResponseWriter, r *http.Request) {
+	localLogger := logger.NewLogger("Handler")
 	var clientReq client.ChatRequest
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
 	if err != nil {
@@ -32,6 +33,7 @@ func (h *Handler) ProcessTextHandler(w http.ResponseWriter, r *http.Request) {
 	clientType, ok := client.CacheModels[clientReq.Model]
 
 	if !ok {
+		localLogger.Error("Model not found", http.StatusBadRequest)
 		http.Error(w, "Model not found", http.StatusBadRequest)
 		return
 	}
@@ -52,7 +54,6 @@ func (h *Handler) ModelHandler(w http.ResponseWriter, r *http.Request) {
 	errChan := make(chan error, 2)
 
 	if h.ollamaClient != nil {
-		log.Println("ollama client is enabled", h.ollamaClient != nil)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -62,7 +63,6 @@ func (h *Handler) ModelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.openAIClient != nil {
-		log.Println("openai client is enabled", h.ollamaClient != nil)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

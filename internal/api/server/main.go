@@ -12,9 +12,8 @@ import (
 )
 
 var (
-	LocalLogger    *logger.Logger
-	port           = 8080
-	modelClientMap = make(map[string]string)
+	LocalLogger *logger.Logger
+	port        = 8080
 )
 
 func Init() {
@@ -51,7 +50,7 @@ func initializeClients() (*handlers.Handler, error) {
 		c := client.NewOpenAIClient()
 		_, err := c.GetModels()
 		if err != nil {
-			log.Println("Error initializing OpenAI client:", err)
+			LocalLogger.Error("Error initializing OpenAI client:", err)
 		} else {
 			openAIClient = c
 			LocalLogger.Info("OpenAI client initialized.")
@@ -64,7 +63,7 @@ func initializeClients() (*handlers.Handler, error) {
 		c := client.NewOllamaClient()
 		_, err := c.GetModels()
 		if err != nil {
-			log.Println("Error initializing Ollama client:", err)
+			LocalLogger.Error("Error initializing Ollama client:", err)
 		} else {
 			ollamaClient = c
 			LocalLogger.Info("Ollama client initialized.")

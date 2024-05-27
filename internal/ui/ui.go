@@ -75,8 +75,8 @@ func initDebugConsole() *tview.TextView {
 
 // Run InitUi logPath and dev should be set to a ()
 func Run() {
-	currentModel := &defaultModel
 	localLogger = logger.NewLogger("views")
+	currentModel := &defaultModel
 
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -149,6 +149,16 @@ func setInputCapture(mainFlex *tview.Flex, currentModel *string) {
 			}
 
 			go func() {
+				models, err := api.ListModels()
+				if err != nil {
+					localLogger.Error("Failed to list models")
+					//return
+				}
+				if !contains(models, *currentModel) {
+					currentModel = &models[0]
+					localLogger.Warn("Selected model "+defaultModel+"not found, switching to default model: ", currentModel)
+				}
+
 				api.Chatting(*currentModel, content, app, textView)
 				textArea.SetDisabled(false)
 			}()
@@ -202,6 +212,8 @@ func createModal(p tview.Primitive, width, height int) tview.Primitive {
 func createModelModal(currentModel *string, mainFlex *tview.Flex) {
 	models, err := api.ListModels()
 	if err != nil {
+		localLogger.Error("Failed to list models")
+		return
 	}
 
 	var pages *tview.Pages

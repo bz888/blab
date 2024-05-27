@@ -40,13 +40,10 @@ func (h *Handler) processWithOpenAIClient(w http.ResponseWriter, r *http.Request
 		defer close(respCh)
 
 		err := h.openAIClient.Chat(r.Context(), &apiReq, func(bts []byte) error {
-			localLogger.Info("Received data chunk:", string(bts))
-
 			cleanData := bytes.TrimPrefix(bts, []byte("data: "))
 			cleanData = bytes.TrimSpace(cleanData)
 
 			if len(cleanData) == 0 {
-				localLogger.Warn("Received empty data chunk")
 				return nil
 			}
 
@@ -64,7 +61,7 @@ func (h *Handler) processWithOpenAIClient(w http.ResponseWriter, r *http.Request
 			if apiResp.Choices != nil && len(apiResp.Choices) > 0 && apiResp.Choices[0].Delta.Content != nil {
 				content := *apiResp.Choices[0].Delta.Content
 				if content != "" {
-					localLogger.Info("msg content", content)
+					localLogger.Info("msg content: ", content)
 					respCh <- content
 				}
 			} else {
@@ -100,7 +97,6 @@ func (h *Handler) processWithOpenAIClient(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) processOpenAiModels() []string {
-
 	if len(client.CacheModels) > 0 {
 		var cachedModelNames []string
 		for key, value := range client.CacheModels {
