@@ -32,7 +32,6 @@ func ListModels() ([]string, error) {
 		localLogger.Error("Failed to perform models request: %s\n", err)
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		localLogger.Error("Failed to get models: %s\n", resp.Status)
@@ -76,6 +75,7 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
+	req.Header.Set("Connection", "keep-alive")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -83,7 +83,11 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 		localLogger.Error("Failed to send request: %s\n\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			localLogger.Error("Failed to close response body: %s\n\n", err)
+		}
+	}()
 
 	fmt.Fprintf(textView, "[green::]Bot:[-]\n")
 	scanner := bufio.NewScanner(resp.Body)

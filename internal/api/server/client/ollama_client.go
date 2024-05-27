@@ -132,8 +132,8 @@ func (c *OllamaClient) Chat(ctx context.Context, req *OllamaChatRequest, fn func
 	return c.stream(ctx, req, fn)
 }
 
-func (c *OllamaClient) stream(ctx context.Context, data any, fn func([]byte) error) error {
-	localLogger := logger.NewLogger("stream chat")
+func (c *OllamaClient) stream(ctx context.Context, data *OllamaChatRequest, fn func([]byte) error) error {
+	localLogger := logger.NewLogger("ollama stream chat")
 	var buf *bytes.Buffer
 	if data != nil {
 		bts, err := json.Marshal(data)

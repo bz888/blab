@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bz888/blab/internal/logger"
 	"io"
 	"net/http"
 	"os"
@@ -39,7 +40,7 @@ func NewOpenAIClient() *OpenAIClient {
 type OpenAIChatRequest struct {
 	Model    string              `json:"model"`
 	Messages []OpenAIChatMessage `json:"messages"`
-	Stream   bool                `json:"stream,omitempty"`
+	Stream   bool                `json:"stream"` // Always true for streaming
 }
 
 type OpenAIChatMessage struct {
@@ -51,14 +52,20 @@ type OpenAIChatResponse struct {
 	ID      string             `json:"id"`
 	Object  string             `json:"object"`
 	Created int64              `json:"created"`
+	Model   string             `json:"model"`
 	Choices []OpenAIChatChoice `json:"choices"`
-	Usage   OpenAIUsage        `json:"usage"`
+	Usage   *OpenAIUsage       `json:"usage,omitempty"` // Usage field, pointer to handle null
 }
 
 type OpenAIChatChoice struct {
-	Index        int               `json:"index"`
-	Message      OpenAIChatMessage `json:"message"`
-	FinishReason string            `json:"finish_reason"`
+	Delta        OpenAIChatDelta `json:"delta"`
+	FinishReason *string         `json:"finish_reason,omitempty"` // Pointer to handle null
+	Index        int             `json:"index"`
+}
+
+type OpenAIChatDelta struct {
+	Content *string `json:"content,omitempty"` // Pointer to handle null
+	Role    *string `json:"role,omitempty"`    // Pointer to handle null
 }
 
 type OpenAIUsage struct {
@@ -118,18 +125,21 @@ func (c *OpenAIClient) GetModels() ([]OpenAIModel, error) {
 
 func AddOpenAIModelCache(openAIModels []OpenAIModel) {
 	for _, model := range openAIModels {
-		if model.OwnedBy == "openai" {
-			CacheModels[model.ID] = "openai"
-		}
+		// todo tidy up
+		//if model.OwnedBy == "openai" {
+		CacheModels[model.ID] = "openai"
+		//}
 	}
 }
 
 // Chat makes a chat request to the OpenAI API
 func (c *OpenAIClient) Chat(ctx context.Context, req *OpenAIChatRequest, fn func([]byte) error) error {
-	return c.stream(ctx, http.MethodPost, req, fn)
+	return c.stream(ctx, req, fn)
 }
 
-func (c *OpenAIClient) stream(ctx context.Context, method string, data any, fn func([]byte) error) error {
+func (c *OpenAIClient) stream(ctx context.Context, data *OpenAIChatRequest, fn func([]byte) error) error {
+	localLogger := logger.NewLogger("openai stream chat")
+
 	var buf *bytes.Buffer
 	if data != nil {
 		bts, err := json.Marshal(data)
@@ -139,8 +149,10 @@ func (c *OpenAIClient) stream(ctx context.Context, method string, data any, fn f
 		buf = bytes.NewBuffer(bts)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, method, c.GetChatURL(), buf)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.GetChatURL(), buf)
 	if err != nil {
+		localLogger.Error("Failed to request on ollama chat:", err)
+		localLogger.Error("failed request", request)
 		return err
 	}
 
@@ -152,6 +164,23 @@ func (c *OpenAIClient) stream(ctx context.Context, method string, data any, fn f
 		return err
 	}
 	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		var errResp map[string]interface{}
+		if err := json.NewDecoder(response.Body).Decode(&errResp); err != nil {
+			localLogger.Error("Failed to decode error response:", err)
+			return fmt.Errorf("received non-200 response: %d, failed to decode error message", response.StatusCode)
+		}
+
+		errorMessage := "unknown error"
+		if msg, ok := errResp["error"].(map[string]interface{}); ok {
+			if message, exists := msg["message"].(string); exists {
+				errorMessage = message
+			}
+		}
+		localLogger.Error("Received error response:", errorMessage)
+		return fmt.Errorf("received non-200 response: %d, error: %s", response.StatusCode, errorMessage)
+	}
 
 	scanner := bufio.NewScanner(response.Body)
 	for scanner.Scan() {
