@@ -8,6 +8,16 @@ type ChatRequest struct {
 
 // ChatResponse ClientResponse Response to client
 type ChatResponse struct {
-	// add role to it
 	ProcessedText string `json:"processedText"`
+}
+
+type ServerChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ServerChatRequest struct {
+	Model    string              `json:"model"`
+	Messages []ServerChatMessage `json:"messages"`
+	Stream   bool                `json:"stream"` // Always true for streaming
 }

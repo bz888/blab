@@ -8,17 +8,18 @@ import (
 	"net/http"
 )
 
-func (h *Handler) processWithOpenAIClient(w http.ResponseWriter, r *http.Request, clientReq client.ChatRequest) {
+func (h *Handler) processWithOpenAIClient(w http.ResponseWriter, r *http.Request, clientReq client.ChatRequest, chatHistory *[]client.ServerChatMessage) {
 	localLogger := logger.NewLogger("openai handler")
-	apiReq := client.OpenAIChatRequest{
-		Model: clientReq.Model,
-		Messages: []client.OpenAIChatMessage{
-			{
-				Role:    client.RoleUser,
-				Content: clientReq.Text,
-			},
-		},
-		Stream: true,
+
+	*chatHistory = append(*chatHistory, client.ServerChatMessage{
+		Role:    client.RoleUser,
+		Content: clientReq.Text,
+	})
+
+	apiReq := client.ServerChatRequest{
+		Model:    clientReq.Model,
+		Messages: *chatHistory,
+		Stream:   true,
 	}
 
 	w.Header().Set("Connection", "keep-alive")

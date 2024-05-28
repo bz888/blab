@@ -7,19 +7,19 @@ import (
 	"net/http"
 )
 
-func (h *Handler) processWithOllamaClient(w http.ResponseWriter, r *http.Request, clientReq client.ChatRequest) {
-	apiReq := client.OllamaChatRequest{
-		Model: clientReq.Model,
-		Messages: []client.OllamaMessage{
-			{
-				Role:    client.RoleUser,
-				Content: clientReq.Text,
-			},
-		},
-		Stream: true,
-	}
-
+func (h *Handler) processWithOllamaClient(w http.ResponseWriter, r *http.Request, clientReq client.ChatRequest, chatHistory *[]client.ServerChatMessage) {
 	localLogger := logger.NewLogger("Ollama handler")
+
+	*chatHistory = append(*chatHistory, client.ServerChatMessage{
+		Role:    client.RoleUser,
+		Content: clientReq.Text,
+	})
+
+	apiReq := client.ServerChatRequest{
+		Model:    clientReq.Model,
+		Messages: *chatHistory,
+		Stream:   true,
+	}
 
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Content-Type", "application/json")

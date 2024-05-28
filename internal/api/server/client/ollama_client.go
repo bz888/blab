@@ -20,7 +20,7 @@ type OllamaClient struct {
 
 type OllamaClientInterface interface {
 	GetModels() ([]OllamaModel, error)
-	Chat(ctx context.Context, req *OllamaChatRequest, fn func([]byte) error) error
+	Chat(ctx context.Context, req *ServerChatRequest, fn func([]byte) error) error
 }
 
 var ollamaConfig = ClientConfig{
@@ -37,33 +37,22 @@ func NewOllamaClient() OllamaClientInterface {
 	}
 }
 
-type OllamaChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []OllamaMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
-}
-
-type OllamaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 type OllamaMessageResponse struct {
-	Model              string        `json:"model"`
-	CreatedAt          string        `json:"created_at"`
-	Message            OllamaMessage `json:"message"`
-	Done               bool          `json:"done"`
-	TotalDuration      int64         `json:"total_duration"`
-	LoadDuration       int64         `json:"load_duration"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration int64         `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       int64         `json:"eval_duration"`
+	Model              string            `json:"model"`
+	CreatedAt          string            `json:"created_at"`
+	Message            ServerChatMessage `json:"message"`
+	Done               bool              `json:"done"`
+	TotalDuration      int64             `json:"total_duration"`
+	LoadDuration       int64             `json:"load_duration"`
+	PromptEvalCount    int               `json:"prompt_eval_count"`
+	PromptEvalDuration int64             `json:"prompt_eval_duration"`
+	EvalCount          int               `json:"eval_count"`
+	EvalDuration       int64             `json:"eval_duration"`
 }
 
 type OllamaAPIResponse struct {
-	Message OllamaMessage `json:"message"`
-	Done    bool          `json:"done"`
+	Message ServerChatMessage `json:"message"`
+	Done    bool              `json:"done"`
 }
 
 type ModelsResponse struct {
@@ -128,11 +117,11 @@ func AddOllamaModelCache(ollamaModels []OllamaModel) {
 	}
 }
 
-func (c *OllamaClient) Chat(ctx context.Context, req *OllamaChatRequest, fn func([]byte) error) error {
+func (c *OllamaClient) Chat(ctx context.Context, req *ServerChatRequest, fn func([]byte) error) error {
 	return c.stream(ctx, req, fn)
 }
 
-func (c *OllamaClient) stream(ctx context.Context, data *OllamaChatRequest, fn func([]byte) error) error {
+func (c *OllamaClient) stream(ctx context.Context, data *ServerChatRequest, fn func([]byte) error) error {
 	localLogger := logger.NewLogger("ollama stream chat")
 	var buf *bytes.Buffer
 	if data != nil {

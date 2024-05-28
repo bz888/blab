@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	serverClient "github.com/bz888/blab/internal/api/server/client"
+	"github.com/bz888/blab/internal/api/server/handlers"
 	"github.com/bz888/blab/internal/logger"
 	"github.com/rivo/tview"
 	"net/http"
@@ -94,6 +95,7 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 	buf := make([]byte, 0, 64*1024) // Create an initial buffer of size 64 KB
 	scanner.Buffer(buf, 512*1024)   // Set the maximum buffer size to 512 KB
 
+	accumulatedText := ""
 	for scanner.Scan() {
 		var clientResp serverClient.ChatResponse
 
@@ -102,11 +104,22 @@ func Chatting(model string, content string, app *tview.Application, textView *tv
 			localLogger.Error("Failed to decode response: %s\n\n", err)
 			continue
 		}
+		accumulatedText += clientResp.ProcessedText
+
 		app.QueueUpdateDraw(func() {
 			fmt.Fprintf(textView, "%s", clientResp.ProcessedText)
 		})
 	}
+
+	handlers.ChatHistory = append(handlers.ChatHistory, serverClient.ServerChatMessage{
+		Role:    serverClient.RoleAssistant,
+		Content: accumulatedText,
+	})
+
+	localLogger.Info("Chat history:", handlers.ChatHistory)
+
 	if err := scanner.Err(); err != nil {
 		localLogger.Error("Failed to read stream: %s\n\n", err)
 	}
+
 }

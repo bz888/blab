@@ -13,6 +13,8 @@ type Handler struct {
 	ollamaClient client.OllamaClientInterface
 }
 
+var ChatHistory = make([]client.ServerChatMessage, 0)
+
 func NewHandler(openAIClient client.OpenAIClientInterface, ollamaClient client.OllamaClientInterface) *Handler {
 	return &Handler{
 		openAIClient: openAIClient,
@@ -21,7 +23,7 @@ func NewHandler(openAIClient client.OpenAIClientInterface, ollamaClient client.O
 }
 
 func (h *Handler) ProcessTextHandler(w http.ResponseWriter, r *http.Request) {
-	localLogger := logger.NewLogger("Handler")
+	localLogger := logger.NewLogger("ProcessTextHandler")
 	var clientReq client.ChatRequest
 	err := json.NewDecoder(r.Body).Decode(&clientReq)
 	if err != nil {
@@ -37,11 +39,12 @@ func (h *Handler) ProcessTextHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Model not found", http.StatusBadRequest)
 		return
 	}
+	// build client request
 
 	if clientType == "openai" {
-		h.processWithOpenAIClient(w, r, clientReq)
+		h.processWithOpenAIClient(w, r, clientReq, &ChatHistory)
 	} else if clientType == "ollama" {
-		h.processWithOllamaClient(w, r, clientReq)
+		h.processWithOllamaClient(w, r, clientReq, &ChatHistory)
 	} else {
 		http.Error(w, "Unknown client type", http.StatusInternalServerError)
 	}

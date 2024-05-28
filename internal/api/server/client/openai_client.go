@@ -20,7 +20,7 @@ type OpenAIClient struct {
 
 type OpenAIClientInterface interface {
 	GetModels() ([]OpenAIModel, error)
-	Chat(ctx context.Context, req *OpenAIChatRequest, fn func([]byte) error) error
+	Chat(ctx context.Context, req *ServerChatRequest, fn func([]byte) error) error
 }
 
 var openAIConfig = ClientConfig{
@@ -35,17 +35,6 @@ func NewOpenAIClient() OpenAIClientInterface {
 	return &OpenAIClient{
 		Client: *NewClient(openAIConfig),
 	}
-}
-
-type OpenAIChatRequest struct {
-	Model    string              `json:"model"`
-	Messages []OpenAIChatMessage `json:"messages"`
-	Stream   bool                `json:"stream"` // Always true for streaming
-}
-
-type OpenAIChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
 }
 
 type OpenAIChatResponse struct {
@@ -133,11 +122,11 @@ func AddOpenAIModelCache(openAIModels []OpenAIModel) {
 }
 
 // Chat makes a chat request to the OpenAI API
-func (c *OpenAIClient) Chat(ctx context.Context, req *OpenAIChatRequest, fn func([]byte) error) error {
+func (c *OpenAIClient) Chat(ctx context.Context, req *ServerChatRequest, fn func([]byte) error) error {
 	return c.stream(ctx, req, fn)
 }
 
-func (c *OpenAIClient) stream(ctx context.Context, data *OpenAIChatRequest, fn func([]byte) error) error {
+func (c *OpenAIClient) stream(ctx context.Context, data *ServerChatRequest, fn func([]byte) error) error {
 	localLogger := logger.NewLogger("openai stream chat")
 
 	var buf *bytes.Buffer

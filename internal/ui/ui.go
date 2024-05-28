@@ -144,8 +144,6 @@ func setInputCapture(mainFlex *tview.Flex, currentModel *string) {
 					textArea.SetDisabled(false)
 				}()
 				return event
-			case "/historical":
-				return event
 			}
 
 			go func() {
