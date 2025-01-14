@@ -2,6 +2,10 @@
 
 Blab is a Terminal User Interface (TUI) built with Golang for Large Language Model (LLM) chat. It uses the `ollama` package to run large language models locally.
 
+Uploading Screen Recording 2025-01-14 at 7.14.47 PM.mov…
+
+
+
 ## macOs
 note: To use voice recognition, `onnxruntime` must be installed
 - **ONNXRuntime**: Install onnxruntime using Homebrew.
